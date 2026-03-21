@@ -342,16 +342,14 @@ class TestRetryReportEndpoint:
         # We also need a simulation for the retry to find
         _make_simulation(tmp_path, monkeypatch, "sim_test")
         resp = client.post("/api/report/report_retry_failed/retry")
-        # If simulation lookup succeeds → 200; if sim not found → 404.
-        # In the test environment both share the same monkeypatched dir.
-        assert resp.status_code in (200, 404)
+        assert resp.status_code == 200
 
     def test_retry_returns_task_id_and_report_id(self, client, tmp_path, monkeypatch):
         """When retry is accepted it returns task_id and report_id."""
         _make_report(tmp_path, monkeypatch, "report_retry_info", status=ReportStatus.FAILED)
         _make_simulation(tmp_path, monkeypatch, "sim_test")
         resp = client.post("/api/report/report_retry_info/retry")
-        if resp.status_code == 200:
-            data = resp.get_json()
-            assert "task_id" in data["data"]
-            assert data["data"]["report_id"] == "report_retry_info"
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "task_id" in data["data"]
+        assert data["data"]["report_id"] == "report_retry_info"

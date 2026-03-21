@@ -2688,6 +2688,7 @@ class ReportManager:
         lines = md.split("\n")
         html_lines: List[str] = []
         in_ul = False  # inside unordered list block
+        in_ol = False  # inside ordered list block
 
         def flush_ul():
             nonlocal in_ul
@@ -2695,13 +2696,23 @@ class ReportManager:
                 html_lines.append("</ul>")
                 in_ul = False
 
+        def flush_ol():
+            nonlocal in_ol
+            if in_ol:
+                html_lines.append("</ol>")
+                in_ol = False
+
+        def flush_lists():
+            flush_ul()
+            flush_ol()
+
         for line in lines:
             raw = line.rstrip()
 
             # --- Headings ---
             h_match = _re.match(r'^(#{1,6})\s+(.*)', raw)
             if h_match:
-                flush_ul()
+                flush_lists()
                 level = len(h_match.group(1))
                 text = _inline(h_match.group(2))
                 html_lines.append(f"<h{level}>{text}</h{level}>")
@@ -2709,7 +2720,7 @@ class ReportManager:
 
             # --- Blockquote ---
             if raw.lstrip().startswith("> "):
-                flush_ul()
+                flush_lists()
                 content = _inline(raw.lstrip()[2:])
                 html_lines.append(f"<blockquote>{content}</blockquote>")
                 continue
@@ -2717,6 +2728,7 @@ class ReportManager:
             # --- Unordered list item (- or * ) ---
             li_match = _re.match(r'^[\-\*]\s+(.*)', raw)
             if li_match:
+                flush_ol()
                 if not in_ul:
                     html_lines.append("<ul>")
                     in_ul = True
@@ -2727,26 +2739,29 @@ class ReportManager:
             oli_match = _re.match(r'^\d+\.\s+(.*)', raw)
             if oli_match:
                 flush_ul()
-                html_lines.append(f"<ol><li>{_inline(oli_match.group(1))}</li></ol>")
+                if not in_ol:
+                    html_lines.append("<ol>")
+                    in_ol = True
+                html_lines.append(f"  <li>{_inline(oli_match.group(1))}</li>")
                 continue
 
             # --- Horizontal rule ---
             if _re.match(r'^[-*_]{3,}$', raw.strip()):
-                flush_ul()
+                flush_lists()
                 html_lines.append("<hr/>")
                 continue
 
             # --- Blank line → paragraph separator ---
             if raw.strip() == "":
-                flush_ul()
+                flush_lists()
                 html_lines.append("")
                 continue
 
             # --- Normal paragraph text ---
-            flush_ul()
+            flush_lists()
             html_lines.append(f"<p>{_inline(raw)}</p>")
 
-        flush_ul()
+        flush_lists()
         body_html = "\n".join(html_lines)
 
         # ── Evidence badge ──────────────────────────────────────────────────
@@ -2826,6 +2841,13 @@ def _inline(text: str) -> str:
     escaped = _re.sub(r'_(.+?)_', r'<em>\1</em>', escaped)
     # `code`
     escaped = _re.sub(r'`(.+?)`', r'<code>\1</code>', escaped)
-    # [text](url)
-    escaped = _re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', escaped)
+    # [text](url) — only allow safe URL schemes to prevent XSS via javascript: etc.
+    def _safe_link(m):
+        text_part = m.group(1)
+        url = m.group(2)
+        # Allow-list safe schemes; strip the link for anything else
+        if _re.match(r'^(https?://|mailto:)', url, _re.IGNORECASE):
+            return f'<a href="{url}">{text_part}</a>'
+        return text_part
+    escaped = _re.sub(r'\[(.+?)\]\((.+?)\)', _safe_link, escaped)
     return escaped

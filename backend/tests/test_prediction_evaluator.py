@@ -270,7 +270,7 @@ class TestEvidenceEndpoint:
         ReportManager.save_report(report)
 
         resp = client.get(f"/api/report/{report_id}/evidence")
-        assert resp.status_code in (503, 404)  # depends on REPORTS_DIR resolution
+        assert resp.status_code == 503
         data = resp.get_json()
         assert data.get("success") is False
 

@@ -52,7 +52,6 @@ Conversation
 """
 
 import os
-import traceback
 import threading
 from flask import request, jsonify, send_file
 
@@ -371,9 +370,9 @@ def retry_report(report_id: str):
     Retry generation of a failed or incomplete report.
 
     Clears the error/FAILED state and re-runs the full generation pipeline
-    in a background thread.  If the report does not yet exist, a new one is
-    created — meaning this endpoint doubles as a "force-generate from ID"
-    helper when you already know the report_id you want to use.
+    in a background thread.  Returns 404 if the report does not exist; use
+    ``POST /generate`` with a ``simulation_id`` to create a brand-new report.
+    Returns 409 if the report is already COMPLETED.
 
     Returns the same task_id / report_id pair as ``POST /generate`` so that
     the caller can poll ``POST /generate/status`` for progress.
@@ -584,7 +583,14 @@ def compare_reports():
             return []
 
         def _ev(report):
-            return report.evidence_summary or {}
+            if report.evidence_summary:
+                return report.evidence_summary
+            # Fallback: compute on demand from agent_log.jsonl for older reports
+            computed = ReportManager.compute_evidence_summary(report.report_id)
+            if computed:
+                report.evidence_summary = computed
+                ReportManager.save_report(report)
+            return computed or {}
 
         titles_a = _outline_titles(report_a)
         titles_b = _outline_titles(report_b)

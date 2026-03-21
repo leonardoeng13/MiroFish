@@ -46,7 +46,6 @@ protocol (:class:`~app.services.simulation_ipc.SimulationIPCClient`).
 """
 
 import os
-import traceback
 from flask import request, jsonify, send_file
 
 from . import simulation_bp
