@@ -712,7 +712,7 @@ Generate JSON with the following fields:
 3. age: Age number (must be an integer)
 4. gender: Gender, must be in English: "male" or "female"
 5. mbti: MBTI type (e.g., INTJ, ENFP)
-6. country: Country (use Chinese, e.g., "中国")
+6. country: Country (e.g., "China")
 7. profession: Occupation
 8. interested_topics: Array of topics of interest
 
@@ -761,7 +761,7 @@ Generate JSON with the following fields:
 3. age: Fixed at 30 (virtual age for institutional accounts)
 4. gender: Fixed at "other" (institutional accounts use "other" to indicate non-individual)
 5. mbti: MBTI type to describe the account style; e.g., ISTJ represents rigorous and conservative
-6. country: Country (use Chinese, e.g., "中国")
+6. country: Country (e.g., "China")
 7. profession: Description of institutional functions
 8. interested_topics: Array of areas of focus
 
@@ -1128,10 +1128,10 @@ logger.info(f"Saved {len(profiles)} Twitter profiles to {file_path} (OASIS CSV f
         
         # Chinese to English mapping
         gender_map = {
-            "男": "male",
-            "女": "female",
-            "机构": "other",
-            "其他": "other",
+            "\u7537": "male",       # Chinese pinyin: nan (male)
+            "\u5973": "female",     # Chinese pinyin: nv (female)
+            "\u673a\u6784": "other",  # Chinese pinyin: jigou (institution)
+            "\u5176\u4ed6": "other",  # Chinese pinyin: qita (other)
             # English values already correct
             "male": "male",
             "female": "female",
