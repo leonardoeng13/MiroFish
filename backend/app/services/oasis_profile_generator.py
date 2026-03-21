@@ -670,6 +670,8 @@ class OasisProfileGenerator:
     
     def _get_system_prompt(self, is_individual: bool) -> str:
         """Get system prompt"""
+        # "Use Chinese" instructs the LLM to generate persona content in Chinese,
+        # as the simulation targets Chinese social media contexts.
         base_prompt = "You are an expert in generating social media user profiles. Generate detailed, realistic personas for public opinion simulation, restoring existing reality to the greatest extent possible. You must return valid JSON format; all string values must not contain unescaped newline characters. Use Chinese."
         return base_prompt
     
