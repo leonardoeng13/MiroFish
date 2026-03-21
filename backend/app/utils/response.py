@@ -1,5 +1,19 @@
 """
 API response helpers
+====================
+
+Provides a single :func:`error_response` factory that all API routes use to
+return consistent error payloads.
+
+Design goals
+------------
+- Every error response has the same top-level shape:
+  ``{"success": False, "error": "<human-readable message>"}``
+- Tracebacks are included **only in DEBUG mode** to avoid leaking internal
+  implementation details to production clients.
+- The function is safe to call outside an application context (e.g. from unit
+  tests) — it catches the :exc:`RuntimeError` raised when
+  :data:`flask.current_app` is not available.
 """
 
 import traceback

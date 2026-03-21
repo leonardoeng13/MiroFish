@@ -1,11 +1,34 @@
 """
 Simulation IPC Communication Module
-For inter-process communication between the Flask backend and simulation scripts
+=====================================
 
-Implements a simple command/response pattern via the filesystem:
-1. Flask writes commands to the commands/ directory
-2. Simulation script polls the command directory, executes commands, and writes responses to the responses/ directory
-3. Flask polls the responses directory to retrieve results
+Lightweight filesystem-based inter-process communication (IPC) between the
+Flask server process and OASIS simulation sub-processes.
+
+Why filesystem IPC?
+-------------------
+The OASIS simulation runs as a standalone Python sub-process with its own
+``asyncio`` event loop.  Sockets or pipes would require additional threading
+on both sides.  A shared directory of small JSON files is simpler, portable,
+and observable (you can ``ls`` the command queue for debugging).
+
+Protocol
+--------
+1. :class:`SimulationIPCClient` (Flask side) writes a command JSON file to
+   ``uploads/simulations/<id>/commands/<uuid>.json``.
+2. :class:`SimulationIPCServer` (simulation side) polls the ``commands/``
+   directory, picks up the command, executes it, and writes the response to
+   ``responses/<uuid>.json``.
+3. The client polls ``responses/<uuid>.json`` with a configurable timeout
+   (default 30 s) and returns the :class:`IPCResponse`.
+
+Command types (:class:`CommandType`)
+-------------------------------------
+- ``INTERVIEW``  — send a question to a named agent; returns its text reply
+- ``GET_STATUS`` — fetch current round and agent action counts
+- ``STOP``       — gracefully terminate the simulation loop
+- ``PAUSE``      — pause between rounds (not yet implemented in all runners)
+- ``RESUME``     — resume after pause
 """
 
 import os

@@ -1,6 +1,39 @@
 """
 Graph-related API routes
-Uses a project context mechanism with server-side persistent state
+========================
+
+Implements the two-step knowledge-graph pipeline:
+
+Step 1 — ``POST /api/graph/ontology/generate``
+    Accept one or more document files (PDF / Markdown / TXT) plus a plain-text
+    *simulation requirement*, extract the text, then ask the LLM to produce an
+    entity/relationship ontology.  A :class:`~app.models.project.Project` is
+    persisted on disk so subsequent calls can reference it by ``project_id``.
+
+Step 2 — ``POST /api/graph/build``
+    Read the previously extracted text and ontology from disk, split it into
+    overlapping chunks, and stream each chunk into a Zep knowledge graph via
+    :class:`~app.services.graph_builder.GraphBuilderService`.  The build runs
+    in a background daemon thread; progress is tracked via
+    :class:`~app.models.task.TaskManager` and polled via
+    ``GET /api/graph/task/<task_id>``.
+
+Additional endpoints
+--------------------
+- ``GET    /api/graph/project/<project_id>``       — retrieve project metadata
+- ``GET    /api/graph/project/list``               — list all projects
+- ``DELETE /api/graph/project/<project_id>``       — remove project directory
+- ``POST   /api/graph/project/<project_id>/reset`` — revert project to ONTOLOGY_GENERATED
+- ``GET    /api/graph/task/<task_id>``             — poll background task progress
+- ``GET    /api/graph/tasks``                      — list all tasks
+- ``GET    /api/graph/data/<graph_id>``            — raw node/edge data from Zep
+- ``DELETE /api/graph/delete/<graph_id>``          — remove a Zep graph
+
+Server-side state model
+-----------------------
+All project state is stored as JSON under
+``backend/uploads/projects/<project_id>/``.  No database is required.
+The frontend only needs to pass the ``project_id`` between API 1 and API 2.
 """
 
 import os
@@ -25,7 +58,17 @@ logger = get_logger('mirofish.api')
 
 
 def allowed_file(filename: str) -> bool:
-    """Check whether the file extension is allowed"""
+    """Check whether the file extension is in the server's allow-list.
+
+    Args:
+        filename: The original filename supplied by the client.  Can be
+            ``None`` or an empty string, in which case ``False`` is returned.
+
+    Returns:
+        ``True`` when the extension (lower-cased, without the leading dot)
+        is present in :attr:`~app.config.Config.ALLOWED_EXTENSIONS`
+        (``{'pdf', 'md', 'txt', 'markdown'}``).
+    """
     if not filename or '.' not in filename:
         return False
     ext = os.path.splitext(filename)[1].lower().lstrip('.')

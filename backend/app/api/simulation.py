@@ -1,6 +1,48 @@
 """
 Simulation-related API routes
-Step2: Zep entity reading & filtering, OASIS simulation preparation and execution (fully automated)
+==============================
+
+Implements the full OASIS social-media simulation pipeline.
+
+Pipeline overview (steps 1–4)
+------------------------------
+Step 1 — Entity retrieval (``/entities/…``)
+    Read typed entities and their edges from a Zep knowledge graph via
+    :class:`~app.services.zep_entity_reader.ZepEntityReader`.  Used by the
+    frontend to display the graph before selecting agents.
+
+Step 2 — Profile generation (``POST /prepare``)
+    Convert Zep entities into OASIS agent profiles
+    (:class:`~app.services.oasis_profile_generator.OasisProfileGenerator`)
+    and write a simulation configuration YAML.  Profiles are persisted under
+    ``uploads/simulations/<simulation_id>/``.
+
+Step 3 — Simulation execution (``POST /run``)
+    Launch the OASIS simulation process in the background via
+    :class:`~app.services.simulation_runner.SimulationRunner`.  Each agent
+    takes actions on Twitter and/or Reddit according to the scenario.
+
+Step 4 — Introspection / interview (``POST /interview``)
+    Send a natural-language question to a running agent and get back its
+    in-character response.  The interview prompt is prefixed with
+    :data:`INTERVIEW_PROMPT_PREFIX` to suppress tool calls.
+
+Management endpoints
+--------------------
+- ``POST   /api/simulation/create``              — create a new simulation record
+- ``GET    /api/simulation/<id>``                — fetch simulation state
+- ``DELETE /api/simulation/<id>``                — remove simulation and all data
+- ``POST   /api/simulation/stop``                — stop a running simulation
+- ``GET    /api/simulation/list``                — list all simulations
+- ``GET    /api/simulation/<id>/actions``        — agent actions log
+- ``GET    /api/simulation/<id>/round-summary``  — per-round statistics
+
+Architecture note
+-----------------
+Simulation processes are managed as sub-processes (not threads) so that
+Python's GIL does not block the OASIS async loop.  IPC between the Flask
+server and the simulation process uses a lightweight JSON-over-socket
+protocol (:class:`~app.services.simulation_ipc.SimulationIPCClient`).
 """
 
 import os

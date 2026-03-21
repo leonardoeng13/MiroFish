@@ -1,6 +1,38 @@
 """
 OASIS Simulation Runner
-Runs simulations in the background and records each Agent's actions, supports real-time status monitoring
+=======================
+
+Launches, monitors, and controls OASIS social-media simulation
+sub-processes from within the Flask server.
+
+Architecture overview
+---------------------
+The OASIS framework runs as a *separate Python process* (not a thread) so
+that its ``asyncio`` event loop can run without being blocked by Flask's
+WSGI thread model.  Communication between the two processes happens through
+two channels:
+
+1. **File-system IPC** (:mod:`~app.services.simulation_ipc`) — a lightweight
+   command/response protocol using JSON files under
+   ``uploads/simulations/<id>/commands/`` and ``responses/``.
+2. **Shared state file** — the simulation process writes a ``run_state.json``
+   file that :class:`SimulationRunner` reads to surface progress to the API.
+
+Key classes
+-----------
+- :class:`RunnerStatus` — sub-process lifecycle states
+  (``IDLE / STARTING / RUNNING / STOPPED / FAILED``).
+- :class:`AgentAction` — a single action taken by one agent in one round.
+- :class:`RoundSummary` — aggregated statistics for a completed round.
+- :class:`SimulationRunState` — full mutable run state polled from disk.
+- :class:`SimulationRunner` — static methods to start, stop, query, and
+  clean up simulation sub-processes.
+
+Process management
+------------------
+``SimulationRunner.register_cleanup()`` registers an ``atexit`` hook that
+terminates all running sub-processes when the Flask server shuts down
+gracefully.
 """
 
 import os

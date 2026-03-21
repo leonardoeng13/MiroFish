@@ -1,5 +1,6 @@
 """
 Prediction Evidence Tracker
+============================
 
 Analyses a completed report's ``agent_log.jsonl`` to produce concrete,
 machine-readable metrics that demonstrate *how* MiroFish derives its
@@ -17,6 +18,29 @@ Metrics computed
 - tool_calls_per_section – per-section breakdown
 - evidence_score         – 0-100 composite score; ≥60 means "evidence-based"
 - is_evidence_based      – True when evidence_score ≥ 60
+
+HTTP endpoint
+-------------
+``GET /api/report/<report_id>/evidence`` — returns
+:meth:`PredictionEvidence.to_dict` as JSON.  The result is also stored
+as ``report.evidence_summary`` so it can be embedded in HTML exports and
+surfaced by the :func:`~app.api.report.compare_reports` endpoint.
+
+Score breakdown
+---------------
+The composite evidence_score (0–100) is computed from four weighted components:
+
++--------------------+--------+------------------------------------------+
+| Component          | Weight | Full-mark condition                      |
++====================+========+==========================================+
+| Tool call volume   |   30   | ≥ 3 tool calls per section               |
++--------------------+--------+------------------------------------------+
+| Tool diversity     |   30   | All 4 known tools used at least once     |
++--------------------+--------+------------------------------------------+
+| Facts retrieved    |   20   | ≥ 20 facts (log-scaled)                  |
++--------------------+--------+------------------------------------------+
+| Agent interviews   |   20   | At least 1 agent interviewed             |
++--------------------+--------+------------------------------------------+
 """
 
 from __future__ import annotations

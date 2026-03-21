@@ -1,9 +1,18 @@
 """
 Pydantic-based request validators for the MiroFish API.
+========================================================
 
 Each model validates the JSON body of a specific endpoint so that
 malformed inputs are rejected early with a clear 400 error before
 reaching business logic.
+
+Adding a new validator
+-----------------------
+1. Subclass :class:`pydantic.BaseModel`.
+2. Add :class:`pydantic.Field` descriptors with ``min_length`` / ``ge`` / ``le``
+   constraints as appropriate.
+3. Optionally add a ``@field_validator`` for cross-field logic.
+4. Call :func:`parse_request` in the route handler and return 400 on error.
 """
 
 from typing import List, Optional

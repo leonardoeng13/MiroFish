@@ -1,6 +1,54 @@
 """
 Report API routes
-Provides endpoints for simulation report generation, retrieval, and conversation
+=================
+
+Provides all endpoints related to simulation analysis reports.
+
+Report lifecycle
+----------------
+1. ``POST /api/report/generate``
+   Kick off an async generation task.  Returns ``task_id`` + ``report_id``
+   immediately so the client can poll for progress without blocking.
+
+2. ``GET  /api/report/generate/status``
+   Poll task progress; returns the current stage / percentage.
+
+3. ``GET  /api/report/<report_id>``
+   Retrieve the completed report JSON (outline, sections, evidence summary).
+
+New roadmap endpoints
+---------------------
+- ``POST   /api/report/<report_id>/retry``
+   Reset a FAILED or PENDING report and re-run generation in a background
+   thread.  Returns 409 if the report is already COMPLETED.
+
+- ``GET    /api/report/<report_id>/export/html``
+   Render the report as a self-contained HTML page (stdlib only — no extra
+   dependencies) and return it as a file attachment.  An *evidence badge*
+   is embedded when ``evidence_summary`` is available.
+
+- ``DELETE /api/report/<report_id>``
+   Permanently remove a report from disk and memory.
+
+- ``GET    /api/report/compare?a=<id>&b=<id>``
+   Side-by-side comparison of two reports: evidence scores, section outlines,
+   and the symmetric difference between their section title sets.
+
+- ``GET    /api/report/<report_id>/evidence``
+   Machine-readable evidence metrics (tool calls, facts, agents interviewed,
+   composite score 0–100) parsed from ``agent_log.jsonl``.
+
+Streaming / logging
+-------------------
+- ``GET  /api/report/<report_id>/agent-log``        — full JSONL agent log
+- ``GET  /api/report/<report_id>/agent-log/stream`` — SSE stream of agent log
+- ``GET  /api/report/<report_id>/console-log``      — human-readable console
+- ``GET  /api/report/<report_id>/console-log/stream``— SSE stream of console
+
+Conversation
+------------
+- ``POST /api/report/chat``  — continue a multi-turn conversation with the
+  report agent; the agent can call retrieval tools to answer follow-up questions.
 """
 
 import os

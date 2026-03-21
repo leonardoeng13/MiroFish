@@ -1,12 +1,53 @@
 """
 Report Agent Service
-Implement ReACT mode simulation report generation using LangChain + Zep
+====================
 
-Features:
-1. Generate reports based on simulation requirements and Zep graph information
-2. Plan the outline structure first, then generate section by section
-3. Each section uses ReACT multi-round thinking and reflection mode
-4. Support dialogue with users, autonomously calling retrieval tools during conversations
+Implements a **ReACT** (Reason + Act) multi-section report generation loop
+using an OpenAI-compatible LLM together with four Zep retrieval tools.
+
+Pipeline
+--------
+1. **Planning** — ask the LLM to produce a structured :class:`ReportOutline`
+   (title + N section headers) given the simulation requirement and a sample
+   of graph facts.
+
+2. **Section generation** — for each section the agent iterates through up to
+   ``REPORT_AGENT_MAX_TOOL_CALLS`` ReACT rounds:
+   - *Think*: LLM produces a reasoning step.
+   - *Act*  : LLM calls one of the four retrieval tools.
+   - *Observe*: Tool result is appended to the context.
+   Then the LLM writes the final section text from the accumulated evidence.
+
+3. **Reflection** — optional post-generation self-critique round that may
+   augment the section with additional facts.
+
+Tools
+-----
+``insight_forge``
+    Hybrid deep retrieval: auto-generates sub-questions, searches nodes/edges,
+    summarises insights.
+``panorama_search``
+    Broad search including expired content; returns all matching entities.
+``quick_search``
+    Fast keyword/semantic search; returns the top-K most relevant facts.
+``interview_agents``
+    Send a question to OASIS agents and receive in-character responses.
+
+Auxiliary classes
+-----------------
+- :class:`ReportLogger`        — writes structured JSONL to ``agent_log.jsonl``
+- :class:`ReportConsoleLogger` — writes human-readable log to ``console.log``
+- :class:`ReportStatus`        — ``PENDING / GENERATING / COMPLETED / FAILED``
+- :class:`ReportSection`       — a single section (title + content)
+- :class:`ReportOutline`       — ordered list of sections + overall title
+- :class:`Report`              — the complete report record persisted to disk
+
+New additions
+-------------
+- :meth:`ReportManager.render_html` — zero-dependency Markdown → HTML renderer
+  that embeds an evidence badge when ``evidence_summary`` is present.
+- Module-level :func:`_inline` — apply bold / italic / code / link transforms
+  on a single line of Markdown text.
 """
 
 import os

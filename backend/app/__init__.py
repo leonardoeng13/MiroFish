@@ -1,5 +1,23 @@
 """
-MiroFish Backend - Flask Application Factory
+MiroFish Backend — Flask Application Factory
+=============================================
+
+This module is the entry-point for the Flask server.  It follows the
+*application factory* pattern so that multiple app instances can be created
+in tests or worker processes without sharing global state.
+
+Startup sequence
+----------------
+1. Suppress third-party warnings before any heavy imports.
+2. Create the Flask app from a Config object.
+3. Configure JSON encoding (Unicode passthrough).
+4. Set up rotating-file + console logging via :func:`setup_logger`.
+5. Enable CORS for all ``/api/*`` routes (development-friendly ``"*"``).
+6. Register the simulation process cleanup hook (``atexit``).
+7. Attach request/response logging middleware.
+8. Register the three API blueprints under ``/api/graph``,
+   ``/api/simulation``, and ``/api/report``.
+9. Expose ``/health`` and ``/health/details`` endpoints.
 """
 
 import os
@@ -17,7 +35,25 @@ from .utils.logger import setup_logger, get_logger
 
 
 def create_app(config_class=Config):
-    """Flask application factory function"""
+    """Flask application factory.
+
+    Creates and fully configures a :class:`~flask.Flask` application instance.
+    Using a factory instead of a module-level ``app = Flask(__name__)`` allows:
+
+    - Multiple isolated instances in tests (each test can get a fresh app).
+    - Different configurations per environment without changing source code.
+    - Deferred imports that avoid circular-dependency issues.
+
+    Args:
+        config_class: A configuration class (or object) compatible with
+            :meth:`~flask.Flask.config.from_object`.  Defaults to
+            :class:`~app.config.Config` which reads from environment variables.
+
+    Returns:
+        A fully initialised :class:`~flask.Flask` application instance ready
+        to be handed to a WSGI server (``gunicorn``, ``waitress``) or the
+        Werkzeug development server.
+    """
     app = Flask(__name__)
     app.config.from_object(config_class)
     

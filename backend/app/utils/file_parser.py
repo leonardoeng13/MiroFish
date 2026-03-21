@@ -1,6 +1,26 @@
 """
 File parsing utilities
-Supports text extraction from PDF, Markdown, and TXT files
+======================
+
+Provides text extraction from the three document formats supported by
+MiroFish: PDF, Markdown, and plain text.
+
+Supported extensions: ``.pdf``, ``.md``, ``.markdown``, ``.txt``
+
+PDF extraction
+    Uses `PyMuPDF <https://pymupdf.readthedocs.io/>`_ (``import fitz``).
+    Each page is read and joined with double newlines.
+
+Markdown / TXT extraction
+    Uses a multi-level encoding detection strategy to handle non-UTF-8
+    files gracefully (charset_normalizer → chardet → UTF-8 with
+    ``errors='replace'``).
+
+Chunking
+    :func:`split_text_into_chunks` implements a sentence-aware sliding window.
+    It tries to break at sentence-ending punctuation (both CJK and Latin)
+    before falling back to a hard character limit.  An ``overlap`` of 50
+    characters ensures context is preserved across chunk boundaries.
 """
 
 import os
@@ -59,7 +79,12 @@ def _read_text_with_fallback(file_path: str) -> str:
 
 
 class FileParser:
-    """File parser"""
+    """Extract plain text from supported document formats.
+
+    All public methods are class-methods so the class can be used without
+    instantiation.  Unsupported extensions raise :exc:`ValueError`; missing
+    files raise :exc:`FileNotFoundError`.
+    """
     
     SUPPORTED_EXTENSIONS = {'.pdf', '.md', '.markdown', '.txt'}
     

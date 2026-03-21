@@ -1,6 +1,31 @@
 """
 Task status management
-Used to track long-running tasks (e.g. graph building)
+======================
+
+Thread-safe in-memory registry for tracking the progress of long-running
+background operations (graph building, simulation preparation, report
+generation).
+
+Design
+------
+:class:`TaskManager` is a *singleton*: all parts of the application share a
+single instance via the ``__new__`` override.  Tasks are stored in a plain
+``dict`` protected by a :class:`threading.Lock`.
+
+Task lifecycle
+--------------
+``PENDING → PROCESSING → COMPLETED / FAILED``
+
+Tasks created by a background thread start in ``PENDING`` state.  The
+thread immediately updates the status to ``PROCESSING`` once it begins work,
+then calls either :meth:`TaskManager.complete_task` or
+:meth:`TaskManager.fail_task` when done.
+
+Memory management
+-----------------
+:meth:`TaskManager.cleanup_old_tasks` removes ``COMPLETED`` and ``FAILED``
+tasks older than ``max_age_hours`` (default 24 h).  The Flask app should
+call this periodically or via a scheduled job to prevent unbounded growth.
 """
 
 import uuid
@@ -12,7 +37,15 @@ from dataclasses import dataclass, field
 
 
 class TaskStatus(str, Enum):
-    """Task status enumeration"""
+    """Background task lifecycle status.
+
+    States
+    ------
+    ``PENDING``     — task created but the background thread has not started yet.
+    ``PROCESSING``  — thread is actively running.
+    ``COMPLETED``   — thread finished successfully; ``result`` is populated.
+    ``FAILED``      — thread raised an unhandled exception; ``error`` is populated.
+    """
     PENDING = "pending"          # Waiting
     PROCESSING = "processing"    # Processing
     COMPLETED = "completed"      # Completed
@@ -21,7 +54,24 @@ class TaskStatus(str, Enum):
 
 @dataclass
 class Task:
-    """Task data class"""
+    """Mutable record for a single background operation.
+
+    All numeric fields default to zero / empty so that a freshly created task
+    can be serialised to JSON without further initialisation.
+
+    Attributes:
+        task_id: UUID string identifying this task.
+        task_type: Free-form string (e.g. ``"report_generate"``).
+        status: Current :class:`TaskStatus`.
+        created_at / updated_at: Timezone-naive ``datetime`` objects.
+        progress: 0–100 integer percentage reported by the background thread.
+        message: Human-readable status message for the frontend.
+        result: Arbitrary dict set by the thread on successful completion.
+        error: Error message (and optional traceback) set on failure.
+        metadata: Extra key/value pairs attached at creation time
+            (e.g. ``{"simulation_id": "…"}``).
+        progress_detail: Fine-grained sub-step progress breakdown.
+    """
     task_id: str
     task_type: str
     status: TaskStatus
@@ -52,9 +102,18 @@ class Task:
 
 
 class TaskManager:
-    """
-    Task manager
-    Thread-safe task status management
+    """Thread-safe singleton registry for background task progress.
+
+    Usage::
+
+        tm = TaskManager()              # always returns the same instance
+        task_id = tm.create_task("report_generate", metadata={"report_id": rid})
+        # … in background thread:
+        tm.update_task(task_id, status=TaskStatus.PROCESSING, progress=10)
+        tm.complete_task(task_id, result={"report_id": rid})
+        # … in API handler:
+        task = tm.get_task(task_id)
+        return jsonify(task.to_dict())
     """
     
     _instance = None

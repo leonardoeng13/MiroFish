@@ -1,15 +1,33 @@
 """
 Simulation Configuration Intelligent Generator
-Uses LLM to automatically generate detailed simulation parameters based on
-simulation requirements, document content, and graph information.
-Achieves full automation without manual parameter configuration.
+===============================================
 
-Adopts a step-by-step generation strategy to avoid failures from
-generating excessively long content all at once:
-1. Generate time configuration
-2. Generate event configuration
-3. Generate Agent configurations in batches
-4. Generate platform configuration
+Uses the LLM to automatically derive all OASIS simulation parameters from
+the project's simulation requirement text, the extracted document content,
+and the Zep graph topology.
+
+Motivation
+----------
+OASIS requires a detailed YAML/JSON configuration that specifies agent
+counts, activity distributions, event schedules, and platform-specific
+settings.  Crafting this by hand is time-consuming and error-prone.
+:class:`SimulationConfigGenerator` replaces that manual step with an LLM
+pipeline that reasons about the scenario and produces sensible defaults.
+
+Step-by-step generation
+-----------------------
+To avoid hitting LLM context-length limits the configuration is produced in
+four separate LLM calls, each focused on one section:
+
+1. **Time configuration** — simulation duration, round count, time-zone offsets
+2. **Event configuration** — scheduled events that agents should react to
+3. **Agent configurations** (batched) — per-agent behaviour profiles and
+   posting frequency distributions
+4. **Platform configuration** — Twitter vs Reddit feature flags and
+   action-probability weights
+
+The results are merged into a single :class:`SimulationParameters` object and
+written to ``uploads/simulations/<id>/config/simulation_config.json``.
 """
 
 import json

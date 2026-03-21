@@ -1,6 +1,20 @@
 """
 LLM client wrapper
-Uses the OpenAI-compatible format for all calls
+==================
+
+Thin wrapper around the ``openai`` Python SDK that normalises every LLM call
+to the OpenAI-compatible chat-completions format.  Any provider that exposes
+a compatible API (OpenAI, Azure OpenAI, Ollama, Together AI, etc.) is
+supported by setting ``LLM_BASE_URL`` in the ``.env`` file.
+
+Key behaviours
+--------------
+- Reads ``LLM_API_KEY``, ``LLM_BASE_URL``, and ``LLM_MODEL_NAME`` from
+  :class:`~app.config.Config` if not passed explicitly.
+- Strips ``<think>…</think>`` reasoning blocks emitted by some reasoning models
+  (e.g. MiniMax M2.5) so the rest of the stack never has to handle them.
+- :meth:`LLMClient.chat_json` adds a second cleanup pass that strips Markdown
+  code-fence wrappers (````json … `````) before calling ``json.loads``.
 """
 
 import json
@@ -12,7 +26,22 @@ from ..config import Config
 
 
 class LLMClient:
-    """LLM client"""
+    """OpenAI-compatible LLM client.
+
+    Instantiate once per service (or per request) and call :meth:`chat` for
+    free-text responses or :meth:`chat_json` when the caller needs a Python
+    dict back.
+
+    Args:
+        api_key: API key; falls back to ``Config.LLM_API_KEY``.
+        base_url: Base URL of the API endpoint; falls back to
+            ``Config.LLM_BASE_URL`` (default: ``https://api.openai.com/v1``).
+        model: Model identifier; falls back to ``Config.LLM_MODEL_NAME``
+            (default: ``gpt-4o-mini``).
+
+    Raises:
+        ValueError: If no API key is available after applying fallbacks.
+    """
     
     def __init__(
         self,
