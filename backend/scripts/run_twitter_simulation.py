@@ -620,7 +620,7 @@ class TwitterSimulationRunner:
                         action_args={"content": content}
                     )
                 except Exception as e:
-                    print(f"  Warning: unable to create initial post for Agent {agent_id}creating initial post: {e}")
+                    print(f"  Warning: unable to create initial post for Agent {agent_id}: {e}")
             
             if initial_actions:
                 await self.env.step(initial_actions)
