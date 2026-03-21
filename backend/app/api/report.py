@@ -265,6 +265,58 @@ def get_generate_status():
 
 # ============== Report retrieval endpoints ==============
 
+@report_bp.route('/<report_id>/evidence', methods=['GET'])
+def get_report_evidence(report_id: str):
+    """
+    Get prediction evidence summary for a report.
+
+    Returns concrete metrics proving that the prediction report is grounded
+    in actual simulation data rather than LLM hallucination:
+
+    - ``total_tool_calls``   – total retrieval tool calls made
+    - ``unique_tools_used``  – which tools were used (diversity indicator)
+    - ``facts_retrieved``    – lower-bound count of facts returned by tools
+    - ``agents_interviewed`` – number of agents queried for first-person perspectives
+    - ``evidence_score``     – 0–100 composite score (≥ 60 means evidence-based)
+    - ``is_evidence_based``  – True when evidence_score ≥ 60
+    - ``sections``           – per-section breakdown
+
+    Returns 404 when the report does not exist and 503 when the agent log is
+    not yet available (report still generating).
+    """
+    try:
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": f"Report not found: {report_id}"
+            }), 404
+
+        # If already computed and saved, return it immediately
+        if report.evidence_summary:
+            return jsonify({
+                "success": True,
+                "data": report.evidence_summary
+            })
+
+        # Otherwise, attempt on-demand computation from the agent log
+        summary = ReportManager.compute_evidence_summary(report_id)
+        if summary is None:
+            return jsonify({
+                "success": False,
+                "error": "Evidence log not yet available; report may still be generating",
+            }), 503
+
+        return jsonify({
+            "success": True,
+            "data": summary
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to get prediction evidence: {str(e)}")
+        return jsonify(error_response(str(e), 500, e)), 500
+
+
 @report_bp.route('/<report_id>', methods=['GET'])
 def get_report(report_id: str):
     """

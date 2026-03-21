@@ -450,6 +450,7 @@ class Report:
     created_at: str = ""
     completed_at: str = ""
     error: Optional[str] = None
+    evidence_summary: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -462,7 +463,8 @@ class Report:
             "markdown_content": self.markdown_content,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
-            "error": self.error
+            "error": self.error,
+            "evidence_summary": self.evidence_summary,
         }
 
 
@@ -1720,6 +1722,12 @@ class ReportAgent:
                     total_time_seconds=total_time_seconds
                 )
             
+            # Compute and persist prediction evidence summary
+            try:
+                report.evidence_summary = ReportManager.compute_evidence_summary(report_id)
+            except Exception as ev_err:
+                logger.warning(f"Evidence summary computation failed (non-fatal): {ev_err}")
+            
             # Save the final report
             ReportManager.save_report(report)
             ReportManager.update_progress(
@@ -2494,7 +2502,8 @@ class ReportManager:
             markdown_content=markdown_content,
             created_at=data.get('created_at', ''),
             completed_at=data.get('completed_at', ''),
-            error=data.get('error')
+            error=data.get('error'),
+            evidence_summary=data.get('evidence_summary'),
         )
     
     @classmethod
@@ -2545,6 +2554,40 @@ class ReportManager:
         
         return reports[:limit]
     
+    @classmethod
+    def compute_evidence_summary(cls, report_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse the agent log for *report_id* and return a prediction evidence summary.
+
+        The summary is derived from ``agent_log.jsonl`` and includes:
+        - total_tool_calls
+        - unique_tools_used
+        - facts_retrieved
+        - agents_interviewed
+        - evidence_score  (0–100)
+        - is_evidence_based
+
+        Returns ``None`` when no agent log exists (e.g. report still generating).
+        """
+        from ..utils.prediction_evaluator import PredictionEvidenceTracker
+
+        log_path = cls._get_agent_log_path(report_id)
+        if not os.path.exists(log_path):
+            return None
+
+        entries = []
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+        evidence = PredictionEvidenceTracker.compute(report_id, entries)
+        return evidence.to_dict()
+
     @classmethod
     def delete_report(cls, report_id: str) -> bool:
         """Delete a report (entire folder)"""
