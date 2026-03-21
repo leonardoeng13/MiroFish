@@ -782,6 +782,53 @@ def list_simulations():
         return jsonify(error_response(str(e), 500, e)), 500
 
 
+@simulation_bp.route('/<simulation_id>', methods=['DELETE'])
+def delete_simulation(simulation_id: str):
+    """
+    Delete a simulation and all its associated data.
+
+    Removes the simulation state, profiles, configuration files, and run
+    state from disk.  The simulation must not be currently RUNNING; if it is,
+    stop it first via ``POST /api/simulation/stop``.
+
+    Returns:
+        200 – simulation deleted successfully
+        404 – simulation not found
+        409 – simulation is currently running (stop it first)
+    """
+    try:
+        manager = SimulationManager()
+        state = manager.get_simulation(simulation_id)
+
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": f"Simulation not found: {simulation_id}"
+            }), 404
+
+        if state.status == SimulationStatus.RUNNING:
+            return jsonify({
+                "success": False,
+                "error": "Cannot delete a running simulation. Stop it first via POST /api/simulation/stop."
+            }), 409
+
+        deleted = manager.delete_simulation(simulation_id)
+        if not deleted:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to delete simulation: {simulation_id}"
+            }), 500
+
+        return jsonify({
+            "success": True,
+            "message": f"Simulation deleted: {simulation_id}"
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to delete simulation: {str(e)}")
+        return jsonify(error_response(str(e), 500, e)), 500
+
+
 def _get_report_id_for_simulation(simulation_id: str) -> str:
     """
     Get the latest report_id for a simulation

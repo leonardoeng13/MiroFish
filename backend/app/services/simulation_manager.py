@@ -526,3 +526,33 @@ class SimulationManager:
                 f"   - Run both platforms in parallel: python {scripts_dir}/run_parallel_simulation.py --config {config_path}"
             )
         }
+
+    def delete_simulation(self, simulation_id: str) -> bool:
+        """
+        Delete a simulation and all its associated data.
+
+        Removes the simulation state file, profile files, configuration, run
+        state, and any other files stored under the simulation directory.
+        The entry is also purged from the in-memory cache.
+
+        Args:
+            simulation_id: The simulation to delete.
+
+        Returns:
+            True if the simulation existed and was deleted, False otherwise.
+        """
+        state = self._load_simulation_state(simulation_id)
+        if not state:
+            return False
+
+        # Remove the simulation directory (profiles, configs, state.json, …)
+        sim_dir = os.path.join(self.SIMULATION_DATA_DIR, simulation_id)
+        if os.path.exists(sim_dir):
+            shutil.rmtree(sim_dir)
+            logger.info(f"Simulation directory deleted: {sim_dir}")
+
+        # Purge from in-memory cache
+        self._simulations.pop(simulation_id, None)
+
+        logger.info(f"Simulation deleted: {simulation_id}")
+        return True

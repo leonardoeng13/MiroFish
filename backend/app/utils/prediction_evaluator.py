@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 KNOWN_TOOLS = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
 
