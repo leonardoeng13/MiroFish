@@ -1,11 +1,32 @@
 """
 Zep Retrieval Tool Service
-Encapsulates graph search, node reading, edge queries, etc. for use by the Report Agent
+===========================
 
-Core Retrieval Tools (optimized):
-1. InsightForge (deep insight retrieval) - most powerful hybrid retrieval, auto-generates sub-questions and retrieves across multiple dimensions
-2. PanoramaSearch (broad search) - get the full picture, including expired content
-3. QuickSearch (simple search) - fast retrieval
+Encapsulates the four retrieval tools available to the Report Agent when it
+runs the ReACT loop.  Each tool wraps one or more Zep graph API calls and
+returns a :class:`~dataclasses.dataclass` result object.
+
+Tools
+-----
+InsightForge (``insight_forge``)
+    The most powerful tool.  Automatically decomposes the query into
+    sub-questions, runs hybrid search (semantic + keyword) across nodes and
+    edges, and synthesises the results into a structured insight report.
+    Best for deep analytical questions.
+
+PanoramaSearch (``panorama_search``)
+    Broad panoramic search that includes *expired* (de-prioritised) nodes.
+    Returns all entities matching the query, including their relationship
+    chains.  Best for "who / what is involved" questions.
+
+QuickSearch (``quick_search``)
+    Fast keyword/semantic search over facts.  Returns the top-K most
+    relevant fact strings.  Best for quick lookups.
+
+InterviewAgents (``interview_agents``)
+    Sends a natural-language question to one or more OASIS agents and
+    receives in-character responses.  Requires a running simulation process.
+    Best for obtaining agent perspectives and predictions.
 """
 
 import time

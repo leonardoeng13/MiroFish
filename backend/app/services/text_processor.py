@@ -1,5 +1,16 @@
 """
 Text processing service
+=======================
+
+Thin facade over :mod:`app.utils.file_parser` that provides the three
+text operations needed by the knowledge-graph pipeline:
+
+1. **Extraction** — read one or more PDF/Markdown/TXT files and return their
+   combined plain-text content.
+2. **Preprocessing** — normalise line endings, collapse excessive blank lines,
+   and strip trailing whitespace so the text is ready for chunking.
+3. **Chunking** — split a long string into overlapping fixed-size windows
+   suitable for feeding to the Zep graph builder in batches.
 """
 
 from typing import List, Optional
@@ -7,11 +18,27 @@ from ..utils.file_parser import FileParser, split_text_into_chunks
 
 
 class TextProcessor:
-    """Text processor"""
+    """Stateless collection of text-manipulation helpers.
+
+    All methods are ``@staticmethod`` so they can be called without
+    instantiation: ``TextProcessor.preprocess_text(raw)``.
+    """
     
     @staticmethod
     def extract_from_files(file_paths: List[str]) -> str:
-        """Extract text from multiple files"""
+        """Extract and concatenate text from one or more files.
+
+        Delegates to :meth:`~app.utils.file_parser.FileParser.extract_from_multiple`.
+        Each file's content is labelled with a ``=== Document N: filename ===``
+        header so the downstream LLM can identify provenance.
+
+        Args:
+            file_paths: Absolute or relative paths to PDF, Markdown, or TXT files.
+
+        Returns:
+            A single string containing all extracted text, separated by double
+            newlines.
+        """
         return FileParser.extract_from_multiple(file_paths)
     
     @staticmethod
@@ -62,7 +89,11 @@ class TextProcessor:
     
     @staticmethod
     def get_text_stats(text: str) -> dict:
-        """Get text statistics"""
+        """Return basic statistics about a text string.
+
+        Returns:
+            dict with keys ``total_chars``, ``total_lines``, and ``total_words``.
+        """
         return {
             "total_chars": len(text),
             "total_lines": text.count('\n') + 1,

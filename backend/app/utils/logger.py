@@ -1,6 +1,29 @@
 """
 Logging configuration module
-Provides unified log management, outputting to both console and file
+==============================
+
+Provides unified, structured log management for the entire MiroFish backend.
+
+Output strategy
+---------------
+- **File** (DEBUG level, rotating): one file per calendar day, max 10 MB,
+  5 rotating backups.  Format includes timestamp, level, logger name,
+  function name, and line number for easy grepping.
+  Location: ``backend/logs/YYYY-MM-DD.log``
+
+- **Console** (INFO level and above): compact single-line format for
+  human-readable development output.
+
+Usage
+-----
+Call :func:`setup_logger` once at application startup (done by
+:func:`~app.create_app`).  All subsequent modules should call
+:func:`get_logger` with a dotted hierarchical name::
+
+    logger = get_logger('mirofish.api.report')
+
+The hierarchy mirrors Python's built-in ``logging`` hierarchy, so you can
+set the level on a parent logger and all children inherit it.
 """
 
 import os

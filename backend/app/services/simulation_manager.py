@@ -1,7 +1,34 @@
 """
 OASIS Simulation Manager
-Manages parallel dual-platform simulation on Twitter and Reddit
-Uses preset scripts + LLM-driven intelligent configuration parameter generation
+========================
+
+Manages the full lifecycle of an OASIS social-media simulation:
+
+States
+------
+``CREATED → PREPARING → READY → RUNNING → COMPLETED / FAILED``
+
+Responsibilities
+----------------
+- **Create** a new :class:`SimulationState` record and persist it to disk.
+- **Prepare** the simulation: read Zep entities, generate agent profiles, write
+  OASIS configuration files (YAML + JSON), and transition the state to READY.
+- **Track** simulation progress by reading the run-state file written by the
+  :class:`~app.services.simulation_runner.SimulationRunner` sub-process.
+- **Delete** a completed/failed simulation: remove the directory tree from disk
+  and purge the in-memory cache entry.
+
+Persistence
+-----------
+Each simulation is stored under::
+
+    uploads/simulations/<simulation_id>/
+        state.json          ← SimulationState serialised to JSON
+        profiles/           ← OASIS agent profile files
+        config/             ← generated OASIS YAML/JSON config
+
+The in-memory ``_simulations`` dict is populated lazily by
+:meth:`SimulationManager.get_simulation` to survive server restarts.
 """
 
 import os
@@ -22,7 +49,14 @@ logger = get_logger('mirofish.simulation')
 
 
 class SimulationStatus(str, Enum):
-    """Simulation status"""
+    """Simulation lifecycle status.
+
+    The happy-path transition sequence is:
+    ``CREATED → PREPARING → READY → RUNNING → COMPLETED``
+
+    Error or manual-stop paths branch to ``FAILED`` or ``STOPPED``
+    respectively from any active state.
+    """
     CREATED = "created"
     PREPARING = "preparing"
     READY = "ready"
@@ -34,14 +68,35 @@ class SimulationStatus(str, Enum):
 
 
 class PlatformType(str, Enum):
-    """Platform type"""
+    """Social-media platform targeted by the OASIS simulation."""
     TWITTER = "twitter"
     REDDIT = "reddit"
 
 
 @dataclass
 class SimulationState:
-    """Simulation state"""
+    """Mutable record representing a single simulation run.
+
+    Attributes:
+        simulation_id: Unique identifier generated at creation time.
+        project_id: Parent project that owns the knowledge graph.
+        graph_id: Zep graph ID used for entity and memory retrieval.
+        enable_twitter: Whether the Twitter platform is active in this run.
+        enable_reddit: Whether the Reddit platform is active in this run.
+        status: Current lifecycle status (see :class:`SimulationStatus`).
+        entities_count: Number of entities read from the Zep graph during
+            the preparation step.
+        profiles_count: Number of OASIS agent profiles generated.
+        entity_types: Distinct entity-type labels present in the graph.
+        config_generated: ``True`` once the OASIS configuration YAML has been
+            written to disk.
+        config_reasoning: Short LLM-generated explanation of why the
+            simulation parameters were chosen.
+        current_round: Most recently completed simulation round (0 = not started).
+        twitter_status / reddit_status: Platform-specific sub-status strings.
+        created_at / updated_at: ISO-8601 timestamps.
+        error: Last error message when the simulation is in FAILED state.
+    """
     simulation_id: str
     project_id: str
     graph_id: str
@@ -112,14 +167,30 @@ class SimulationState:
 
 
 class SimulationManager:
-    """
-    Simulation Manager
-    
-    Core features:
-    1. Read and filter entities from the Zep graph
-    2. Generate OASIS Agent Profiles
-    3. Use LLM to intelligently generate simulation configuration parameters
-    4. Prepare all files required by the preset scripts
+    """Orchestrates the full preparation → run → delete lifecycle of OASIS simulations.
+
+    Core responsibilities
+    ---------------------
+    1. Read and filter typed entities from the Zep knowledge graph.
+    2. Generate OASIS agent profiles from those entities.
+    3. Use the LLM to derive sensible simulation configuration parameters.
+    4. Write all files required by the OASIS preset scripts under
+       ``uploads/simulations/<simulation_id>/``.
+    5. Expose :meth:`delete_simulation` to remove a simulation cleanly
+       (disk + in-memory cache).
+
+    Thread safety
+    -------------
+    :meth:`prepare_simulation` is designed to be called from a background
+    thread; it does not hold any shared locks.  The ``_simulations`` dict
+    is an instance-level cache: create a new :class:`SimulationManager`
+    per request (or use the singleton pattern in your views).
+
+    Attributes:
+        SIMULATION_DATA_DIR: Absolute path to the root directory where all
+            simulation data is stored on disk.
+        _simulations: Lazy-loaded in-memory cache mapping
+            ``simulation_id → SimulationState``.
     """
     
     # Simulation data storage directory
@@ -526,3 +597,33 @@ class SimulationManager:
                 f"   - Run both platforms in parallel: python {scripts_dir}/run_parallel_simulation.py --config {config_path}"
             )
         }
+
+    def delete_simulation(self, simulation_id: str) -> bool:
+        """
+        Delete a simulation and all its associated data.
+
+        Removes the simulation state file, profile files, configuration, run
+        state, and any other files stored under the simulation directory.
+        The entry is also purged from the in-memory cache.
+
+        Args:
+            simulation_id: The simulation to delete.
+
+        Returns:
+            True if the simulation existed and was deleted, False otherwise.
+        """
+        state = self._load_simulation_state(simulation_id)
+        if not state:
+            return False
+
+        # Remove the simulation directory (profiles, configs, state.json, …)
+        sim_dir = os.path.join(self.SIMULATION_DATA_DIR, simulation_id)
+        if os.path.exists(sim_dir):
+            shutil.rmtree(sim_dir)
+            logger.info(f"Simulation directory deleted: {sim_dir}")
+
+        # Purge from in-memory cache
+        self._simulations.pop(simulation_id, None)
+
+        logger.info(f"Simulation deleted: {simulation_id}")
+        return True

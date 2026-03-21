@@ -1,6 +1,21 @@
 """
 Configuration Management
-Loads configuration from the project root .env file
+========================
+
+Loads runtime configuration from a ``.env`` file located at the project
+root (``MiroFish/.env``).  If no file is found the module falls back to
+OS-level environment variables, which is the expected behaviour in
+container/production deployments.
+
+Priority order
+--------------
+1. ``MiroFish/.env``  (relative to ``backend/app/config.py``)
+2. Any ``.env`` discoverable by ``python-dotenv`` (current working directory)
+3. OS environment variables (always present)
+
+All configuration values are exposed as class attributes on :class:`Config`
+so that they can be injected into the Flask app via
+``app.config.from_object(Config)``.
 """
 
 import os
@@ -18,7 +33,16 @@ else:
 
 
 class Config:
-    """Flask configuration class"""
+    """Flask configuration class.
+
+    All settings are read from environment variables (loaded above from
+    ``.env``).  Defaults are provided for non-secret values so the server
+    can start in development mode without a fully populated ``.env`` file.
+
+    Required secrets (validated by :meth:`validate`):
+        - ``LLM_API_KEY``  — API key for the OpenAI-compatible LLM provider
+        - ``ZEP_API_KEY``  — API key for the Zep knowledge-graph service
+    """
     
     # Flask configuration
     SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
@@ -65,7 +89,14 @@ class Config:
     
     @classmethod
     def validate(cls):
-        """Validate required configuration"""
+        """Validate required configuration.
+
+        Returns:
+            list[str]: A (possibly empty) list of human-readable error messages.
+                An empty list means the configuration is valid and the server
+                can make real LLM/Zep API calls.  The ``/health/details``
+                endpoint exposes these errors without leaking secret values.
+        """
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY is not configured")

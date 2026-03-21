@@ -1,6 +1,23 @@
 """
 Zep Entity Reading and Filtering Service
-Reads nodes from the Zep graph and filters out nodes matching predefined entity types
+=========================================
+
+Reads nodes (entities) and their edges (relationships) from a Zep knowledge
+graph and filters them down to only the semantically meaningful types.
+
+Why filtering?
+--------------
+Zep stores *all* text chunks as ``Entity`` nodes with no additional label.
+Raw entity nodes like ``"the"`` or ``"Section 3.2"`` are not useful for
+simulation.  :class:`ZepEntityReader` discards nodes whose ``label`` is the
+generic ``"Entity"`` type and keeps only nodes whose type matches the
+project-level ontology (e.g. ``Person``, ``Organisation``, ``Topic``).
+
+Enrichment
+----------
+When ``enrich_with_edges=True`` the reader fetches all edges for the graph
+and attaches them to the matching entity nodes, providing the Report Agent
+with relationship context alongside entity facts.
 """
 
 import time

@@ -1,7 +1,29 @@
 """
 Project context management
-Used to persist project state on the server side,
-avoiding the need for the frontend to pass large amounts of data between API calls
+===========================
+
+Persists project state on the server side so the frontend only needs to pass
+a ``project_id`` between API calls instead of re-uploading files or re-sending
+large JSON bodies.
+
+Persistence layout
+------------------
+Each project is stored under a UUID-derived directory::
+
+    uploads/projects/<project_id>/
+        project.json          ← serialised Project dataclass
+        extracted_text.txt    ← combined plain-text from all uploaded files
+        files/                ← uploaded document files (PDF / MD / TXT)
+
+The :class:`ProjectManager` class manages CRUD operations on this directory
+structure.  All methods are ``@classmethod`` so no instantiation is needed.
+
+Design note
+-----------
+Project metadata is stored as a plain JSON file rather than a database table
+to keep the development environment dependency-free.  The trade-off is that
+concurrent writes from multiple Flask workers could race; for production
+deployments with multiple workers a database-backed store should be used.
 """
 
 import os
@@ -16,7 +38,16 @@ from ..config import Config
 
 
 class ProjectStatus(str, Enum):
-    """Project status"""
+    """Project lifecycle status.
+
+    The normal progression is:
+    ``CREATED → ONTOLOGY_GENERATED → GRAPH_BUILDING → GRAPH_COMPLETED``
+
+    A project transitions to ``FAILED`` if any step raises an unrecoverable
+    error.  :meth:`~app.api.graph.reset_project` can revert a project back to
+    ``ONTOLOGY_GENERATED`` (or ``CREATED`` if no ontology was saved) so the
+    graph can be rebuilt without re-uploading files.
+    """
     CREATED = "created"              # Just created, files uploaded
     ONTOLOGY_GENERATED = "ontology_generated"  # Ontology has been generated
     GRAPH_BUILDING = "graph_building"    # Graph is being built
@@ -26,7 +57,29 @@ class ProjectStatus(str, Enum):
 
 @dataclass
 class Project:
-    """Project data model"""
+    """Project data model — the central record for a MiroFish analysis run.
+
+    Attributes:
+        project_id: Unique identifier (``proj_<12 hex chars>``).
+        name: Human-readable project label supplied by the user.
+        status: Current lifecycle stage (see :class:`ProjectStatus`).
+        created_at / updated_at: ISO-8601 timestamps managed by
+            :class:`ProjectManager`.
+        files: Metadata list for each uploaded document
+            (``[{"filename": …, "size": …}, …]``).
+        total_text_length: Character count of the combined extracted text.
+        ontology: Entity/relationship type definitions produced by
+            :class:`~app.services.ontology_generator.OntologyGenerator`.
+        analysis_summary: Free-text summary from the ontology LLM call.
+        graph_id: Zep graph identifier populated after a successful build.
+        graph_build_task_id: ID of the background :class:`~app.models.task.Task`
+            that built the graph (used to poll progress).
+        simulation_requirement: The plain-text scenario description the user
+            submitted; used by the simulation and report pipelines.
+        chunk_size / chunk_overlap: Text chunking parameters used when
+            adding episodes to the Zep graph.
+        error: Last error message when ``status == FAILED``.
+    """
     project_id: str
     name: str
     status: ProjectStatus

@@ -1,6 +1,54 @@
 """
 Report API routes
-Provides endpoints for simulation report generation, retrieval, and conversation
+=================
+
+Provides all endpoints related to simulation analysis reports.
+
+Report lifecycle
+----------------
+1. ``POST /api/report/generate``
+   Kick off an async generation task.  Returns ``task_id`` + ``report_id``
+   immediately so the client can poll for progress without blocking.
+
+2. ``GET  /api/report/generate/status``
+   Poll task progress; returns the current stage / percentage.
+
+3. ``GET  /api/report/<report_id>``
+   Retrieve the completed report JSON (outline, sections, evidence summary).
+
+New roadmap endpoints
+---------------------
+- ``POST   /api/report/<report_id>/retry``
+   Reset a FAILED or PENDING report and re-run generation in a background
+   thread.  Returns 409 if the report is already COMPLETED.
+
+- ``GET    /api/report/<report_id>/export/html``
+   Render the report as a self-contained HTML page (stdlib only — no extra
+   dependencies) and return it as a file attachment.  An *evidence badge*
+   is embedded when ``evidence_summary`` is available.
+
+- ``DELETE /api/report/<report_id>``
+   Permanently remove a report from disk and memory.
+
+- ``GET    /api/report/compare?a=<id>&b=<id>``
+   Side-by-side comparison of two reports: evidence scores, section outlines,
+   and the symmetric difference between their section title sets.
+
+- ``GET    /api/report/<report_id>/evidence``
+   Machine-readable evidence metrics (tool calls, facts, agents interviewed,
+   composite score 0–100) parsed from ``agent_log.jsonl``.
+
+Streaming / logging
+-------------------
+- ``GET  /api/report/<report_id>/agent-log``        — full JSONL agent log
+- ``GET  /api/report/<report_id>/agent-log/stream`` — SSE stream of agent log
+- ``GET  /api/report/<report_id>/console-log``      — human-readable console
+- ``GET  /api/report/<report_id>/console-log/stream``— SSE stream of console
+
+Conversation
+------------
+- ``POST /api/report/chat``  — continue a multi-turn conversation with the
+  report agent; the agent can call retrieval tools to answer follow-up questions.
 """
 
 import os
@@ -15,6 +63,8 @@ from ..services.simulation_manager import SimulationManager
 from ..models.project import ProjectManager
 from ..models.task import TaskManager, TaskStatus
 from ..utils.logger import get_logger
+from ..utils.response import error_response
+from ..utils.validators import GenerateReportRequest, parse_request
 
 logger = get_logger('mirofish.api.report')
 
@@ -49,14 +99,12 @@ def generate_report():
     try:
         data = request.get_json() or {}
         
-        simulation_id = data.get('simulation_id')
-        if not simulation_id:
-            return jsonify({
-                "success": False,
-                "error": "Please provide simulation_id"
-            }), 400
+        validated, err = parse_request(GenerateReportRequest, data)
+        if err:
+            return jsonify({"success": False, "error": err}), 400
         
-        force_regenerate = data.get('force_regenerate', False)
+        simulation_id = validated.simulation_id
+        force_regenerate = validated.force_regenerate
         
         # Get simulation information
         manager = SimulationManager()
@@ -188,11 +236,7 @@ def generate_report():
         
     except Exception as e:
         logger.error(f"Failed to start report generation task: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/generate/status', methods=['POST'])
@@ -269,6 +313,340 @@ def get_generate_status():
 
 # ============== Report retrieval endpoints ==============
 
+@report_bp.route('/<report_id>/evidence', methods=['GET'])
+def get_report_evidence(report_id: str):
+    """
+    Get prediction evidence summary for a report.
+
+    Returns concrete metrics proving that the prediction report is grounded
+    in actual simulation data rather than LLM hallucination:
+
+    - ``total_tool_calls``   – total retrieval tool calls made
+    - ``unique_tools_used``  – which tools were used (diversity indicator)
+    - ``facts_retrieved``    – lower-bound count of facts returned by tools
+    - ``agents_interviewed`` – number of agents queried for first-person perspectives
+    - ``evidence_score``     – 0–100 composite score (≥ 60 means evidence-based)
+    - ``is_evidence_based``  – True when evidence_score ≥ 60
+    - ``sections``           – per-section breakdown
+
+    Returns 404 when the report does not exist and 503 when the agent log is
+    not yet available (report still generating).
+    """
+    try:
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": f"Report not found: {report_id}"
+            }), 404
+
+        # If already computed and saved, return it immediately
+        if report.evidence_summary:
+            return jsonify({
+                "success": True,
+                "data": report.evidence_summary
+            })
+
+        # Otherwise, attempt on-demand computation from the agent log
+        summary = ReportManager.compute_evidence_summary(report_id)
+        if summary is None:
+            return jsonify({
+                "success": False,
+                "error": "Evidence log not yet available; report may still be generating",
+            }), 503
+
+        return jsonify({
+            "success": True,
+            "data": summary
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to get prediction evidence: {str(e)}")
+        return jsonify(error_response(str(e), 500, e)), 500
+
+
+@report_bp.route('/<report_id>/retry', methods=['POST'])
+def retry_report(report_id: str):
+    """
+    Retry generation of a failed or incomplete report.
+
+    Clears the error/FAILED state and re-runs the full generation pipeline
+    in a background thread.  If the report does not yet exist, a new one is
+    created — meaning this endpoint doubles as a "force-generate from ID"
+    helper when you already know the report_id you want to use.
+
+    Returns the same task_id / report_id pair as ``POST /generate`` so that
+    the caller can poll ``POST /generate/status`` for progress.
+    """
+    try:
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": f"Report not found: {report_id}"
+            }), 404
+
+        if report.status == ReportStatus.COMPLETED:
+            return jsonify({
+                "success": False,
+                "error": "Report is already completed. Use force_regenerate via POST /generate if you want a fresh copy."
+            }), 409
+
+        # Retrieve the simulation so we can reconstruct the agent
+        manager = SimulationManager()
+        state = manager.get_simulation(report.simulation_id)
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": f"Simulation not found: {report.simulation_id}"
+            }), 404
+
+        project = ProjectManager.get_project(state.project_id)
+        simulation_requirement = (
+            project.simulation_requirement if project else report.simulation_requirement
+        )
+        graph_id = report.graph_id
+
+        # Reset report state
+        report.status = ReportStatus.PENDING
+        report.error = None
+        report.markdown_content = ""
+        report.evidence_summary = None
+        report.completed_at = ""
+        ReportManager.save_report(report)
+
+        # Create task
+        task_manager = TaskManager()
+        task_id = task_manager.create_task(
+            task_type="report_generate",
+            metadata={
+                "simulation_id": report.simulation_id,
+                "graph_id": graph_id,
+                "report_id": report_id,
+                "is_retry": True,
+            }
+        )
+
+        def run_retry():
+            try:
+                task_manager.update_task(
+                    task_id,
+                    status=TaskStatus.PROCESSING,
+                    progress=0,
+                    message="Retrying report generation…"
+                )
+                agent = ReportAgent(
+                    graph_id=graph_id,
+                    simulation_id=report.simulation_id,
+                    simulation_requirement=simulation_requirement,
+                )
+
+                def progress_callback(stage, progress, message):
+                    task_manager.update_task(
+                        task_id, progress=progress,
+                        message=f"[{stage}] {message}"
+                    )
+
+                result = agent.generate_report(
+                    progress_callback=progress_callback,
+                    report_id=report_id,
+                )
+                ReportManager.save_report(result)
+
+                if result.status == ReportStatus.COMPLETED:
+                    task_manager.complete_task(task_id, result={
+                        "report_id": report_id,
+                        "simulation_id": report.simulation_id,
+                        "status": "completed",
+                    })
+                else:
+                    task_manager.fail_task(task_id, result.error or "Retry failed")
+            except Exception as exc:
+                logger.error(f"Report retry failed: {exc}")
+                task_manager.fail_task(task_id, str(exc))
+
+        threading.Thread(target=run_retry, daemon=True).start()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "report_id": report_id,
+                "task_id": task_id,
+                "status": "retrying",
+                "message": "Retry started; poll POST /api/report/generate/status for progress"
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to start report retry: {str(e)}")
+        return jsonify(error_response(str(e), 500, e)), 500
+
+
+@report_bp.route('/<report_id>/export/html', methods=['GET'])
+def export_report_html(report_id: str):
+    """
+    Export a completed report as a self-contained HTML page.
+
+    The HTML includes a minimal CSS stylesheet and, when available, an
+    evidence badge summarising the prediction quality metrics
+    (evidence_score, tool_calls, facts, agents_interviewed).
+
+    Returns a ``text/html`` file attachment.  Returns 404 when the report
+    does not exist and 400 when the report has not been completed yet.
+    """
+    try:
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": f"Report not found: {report_id}"
+            }), 404
+
+        if report.status != ReportStatus.COMPLETED:
+            return jsonify({
+                "success": False,
+                "error": f"Report is not complete yet (status: {report.status.value})"
+            }), 400
+
+        html_content = ReportManager.render_html(report)
+
+        import tempfile
+        from flask import after_this_request
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html',
+                                         delete=False, encoding='utf-8') as f:
+            f.write(html_content)
+            temp_path = f.name
+
+        @after_this_request
+        def _remove_temp(response):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            return response
+
+        return send_file(
+            temp_path,
+            as_attachment=True,
+            download_name=f"{report_id}.html",
+            mimetype="text/html"
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to export report as HTML: {str(e)}")
+        return jsonify(error_response(str(e), 500, e)), 500
+
+
+@report_bp.route('/compare', methods=['GET'])
+def compare_reports():
+    """
+    Compare two reports side-by-side.
+
+    Query parameters:
+        a  – first report ID  (required)
+        b  – second report ID (required)
+
+    Returns a structured comparison including:
+    - Metadata diff (title, sections count, completion times)
+    - Evidence score comparison (delta and winner)
+    - Section-level outline diff (titles present in each report)
+
+    Returns 400 when either ID is missing and 404 when a report is not found.
+    """
+    try:
+        id_a = request.args.get("a", "").strip()
+        id_b = request.args.get("b", "").strip()
+
+        if not id_a or not id_b:
+            return jsonify({
+                "success": False,
+                "error": "Both query parameters 'a' and 'b' (report IDs) are required"
+            }), 400
+
+        report_a = ReportManager.get_report(id_a)
+        if not report_a:
+            return jsonify({
+                "success": False,
+                "error": f"Report not found: {id_a}"
+            }), 404
+
+        report_b = ReportManager.get_report(id_b)
+        if not report_b:
+            return jsonify({
+                "success": False,
+                "error": f"Report not found: {id_b}"
+            }), 404
+
+        def _outline_titles(report):
+            if report.outline:
+                return [s.title for s in report.outline.sections]
+            return []
+
+        def _ev(report):
+            return report.evidence_summary or {}
+
+        titles_a = _outline_titles(report_a)
+        titles_b = _outline_titles(report_b)
+        set_a = set(titles_a)
+        set_b = set(titles_b)
+
+        score_a = _ev(report_a).get("evidence_score", 0.0)
+        score_b = _ev(report_b).get("evidence_score", 0.0)
+        delta = round(score_b - score_a, 1)
+        if score_a > score_b:
+            winner = id_a
+        elif score_b > score_a:
+            winner = id_b
+        else:
+            winner = "tie"
+
+        comparison = {
+            "report_a": {
+                "report_id": id_a,
+                "title": report_a.outline.title if report_a.outline else "",
+                "status": report_a.status.value,
+                "sections_count": len(titles_a),
+                "section_titles": titles_a,
+                "evidence_score": score_a,
+                "is_evidence_based": _ev(report_a).get("is_evidence_based", False),
+                "total_tool_calls": _ev(report_a).get("total_tool_calls", 0),
+                "facts_retrieved": _ev(report_a).get("facts_retrieved", 0),
+                "agents_interviewed": _ev(report_a).get("agents_interviewed", 0),
+                "completed_at": report_a.completed_at,
+            },
+            "report_b": {
+                "report_id": id_b,
+                "title": report_b.outline.title if report_b.outline else "",
+                "status": report_b.status.value,
+                "sections_count": len(titles_b),
+                "section_titles": titles_b,
+                "evidence_score": score_b,
+                "is_evidence_based": _ev(report_b).get("is_evidence_based", False),
+                "total_tool_calls": _ev(report_b).get("total_tool_calls", 0),
+                "facts_retrieved": _ev(report_b).get("facts_retrieved", 0),
+                "agents_interviewed": _ev(report_b).get("agents_interviewed", 0),
+                "completed_at": report_b.completed_at,
+            },
+            "diff": {
+                "evidence_score_delta": delta,
+                "higher_evidence_score": winner,
+                "sections_only_in_a": sorted(set_a - set_b),
+                "sections_only_in_b": sorted(set_b - set_a),
+                "sections_in_both": sorted(set_a & set_b),
+            },
+        }
+
+        return jsonify({
+            "success": True,
+            "data": comparison
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to compare reports: {str(e)}")
+        return jsonify(error_response(str(e), 500, e)), 500
+
+
 @report_bp.route('/<report_id>', methods=['GET'])
 def get_report(report_id: str):
     """
@@ -304,11 +682,7 @@ def get_report(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get report: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/by-simulation/<simulation_id>', methods=['GET'])
@@ -343,11 +717,7 @@ def get_report_by_simulation(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get report: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/list', methods=['GET'])
@@ -383,11 +753,7 @@ def list_reports():
         
     except Exception as e:
         logger.error(f"Failed to list reports: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/<report_id>/download', methods=['GET'])
@@ -429,11 +795,7 @@ def download_report(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to download report: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/<report_id>', methods=['DELETE'])
@@ -455,11 +817,7 @@ def delete_report(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to delete report: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Report Agent conversation endpoint ==============
@@ -552,11 +910,7 @@ def chat_with_report_agent():
         
     except Exception as e:
         logger.error(f"Conversation failed: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Report progress and section-by-section endpoints ==============
@@ -595,11 +949,7 @@ def get_report_progress(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get report progress: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/<report_id>/sections', methods=['GET'])
@@ -647,11 +997,7 @@ def get_report_sections(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get section list: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/<report_id>/section/<int:section_index>', methods=['GET'])
@@ -691,11 +1037,7 @@ def get_single_section(report_id: str, section_index: int):
         
     except Exception as e:
         logger.error(f"Failed to get section content: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Report status check endpoint ==============
@@ -742,11 +1084,7 @@ def check_report_status(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to check report status: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Agent log endpoints ==============
@@ -803,11 +1141,7 @@ def get_agent_log(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get Agent log: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/<report_id>/agent-log/stream', methods=['GET'])
@@ -837,11 +1171,7 @@ def stream_agent_log(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get Agent log: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Console log endpoints ==============
@@ -885,11 +1215,7 @@ def get_console_log(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get console log: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/<report_id>/console-log/stream', methods=['GET'])
@@ -919,11 +1245,7 @@ def stream_console_log(report_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get console log: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Tool call endpoints (for debugging) ==============
@@ -969,11 +1291,7 @@ def search_graph_tool():
         
     except Exception as e:
         logger.error(f"Graph search failed: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @report_bp.route('/tools/statistics', methods=['POST'])
@@ -1009,8 +1327,4 @@ def get_graph_statistics_tool():
         
     except Exception as e:
         logger.error(f"Failed to get graph statistics: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500

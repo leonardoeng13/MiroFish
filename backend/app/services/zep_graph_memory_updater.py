@@ -1,6 +1,28 @@
 """
 Zep Graph Memory Update Service
-Dynamically updates Agent activities from simulations into the Zep knowledge graph
+================================
+
+Persists agent actions produced during an OASIS simulation run back into the
+Zep knowledge graph so that the Report Agent can retrieve them as structured
+facts during report generation.
+
+Why write back to Zep?
+----------------------
+The OASIS simulation records each agent's social-media actions (posts, likes,
+follows, comments) in ``run_state.json``.  By converting those actions into
+Zep *episodes* and letting Zep extract entities and edges from them, the
+Report Agent gains access to the actual simulation outcomes — not just the
+initial scenario documents — when it calls InsightForge or PanoramaSearch.
+
+Update strategy
+---------------
+:class:`ZepGraphMemoryManager` runs in a background thread during the
+simulation.  After each completed round it reads the new ``AgentAction``
+entries from ``run_state.json``, formats them as natural-language episodes,
+and batches them into the Zep graph via the standard episodes API.
+
+This keeps memory updates non-blocking: a failed Zep write does not stop the
+simulation; it is logged and retried on the next round.
 """
 
 import os

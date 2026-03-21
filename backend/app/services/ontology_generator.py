@@ -1,6 +1,30 @@
 """
 Ontology Generation Service
-Interface 1: Analyze text content, generate entity and relationship type definitions for social simulation
+============================
+
+Step 1 of the knowledge-graph pipeline: analyse document text and derive the
+entity-type and relationship-type ontology that will govern what the Zep
+graph builder extracts.
+
+What is an ontology here?
+--------------------------
+In this context the "ontology" is a JSON structure with two keys:
+
+``entity_types``
+    A list of entity-type definitions.  Each entry carries:
+    - ``name`` — the label used in Zep (e.g. ``"Person"``, ``"Topic"``)
+    - ``description`` — when to apply this type
+    - ``examples`` — up to three example strings from the documents
+
+``edge_types``
+    A list of relationship-type definitions.  Each entry carries:
+    - ``name`` — the predicate label (e.g. ``"SUPPORTS"``)
+    - ``source_types`` / ``target_types`` — which entity types can be connected
+    - ``description``
+
+The generated ontology is persisted in the project's ``project.json`` and
+passed to Zep via the graph builder's ``set_ontology`` call so that Zep
+extracts entities according to the simulation's semantic needs.
 """
 
 import json

@@ -1,11 +1,29 @@
 """
 OASIS Agent Profile Generator
-Converts entities from the Zep knowledge graph into the Agent Profile format required by the OASIS simulation platform
+===============================
 
-Optimizations and improvements:
-1. Invoke Zep retrieval to further enrich node information
-2. Optimized prompts to generate highly detailed personas
-3. Distinguish between individual entities and abstract group entities
+Converts typed entities from a Zep knowledge graph into the structured
+**Agent Profile** format required by the OASIS simulation platform.
+
+Profile generation pipeline
+----------------------------
+1. Read typed entities from :class:`~app.services.zep_entity_reader.ZepEntityReader`.
+2. For each entity, optionally fetch additional facts from the Zep graph to
+   enrich the profile with real simulation-relevant details.
+3. Call the LLM with an optimised persona-generation prompt that distinguishes
+   between *individual* entities (e.g. real people / organisations) and
+   *abstract group* entities (e.g. demographic segments).
+4. Return a list of :class:`OasisAgentProfile` objects ready to be serialised
+   as OASIS YAML/JSON configuration files.
+
+Design notes
+------------
+- Individual profiles include: name, age, occupation, personality traits,
+  social-media behaviour patterns, and initial beliefs.
+- Group profiles represent a fictional but representative member of the group
+  and include group-level statistics where available.
+- All profiles are written to ``uploads/simulations/<id>/profiles/`` by
+  :class:`~app.services.simulation_manager.SimulationManager`.
 """
 
 import json
@@ -1113,7 +1131,7 @@ Important:
                 ]
                 writer.writerow(row)
         
-logger.info(f"Saved {len(profiles)} Twitter profiles to {file_path} (OASIS CSV format)")
+        logger.info(f"Saved {len(profiles)} Twitter profiles to {file_path} (OASIS CSV format)")
     
     def _normalize_gender(self, gender: Optional[str]) -> str:
         """

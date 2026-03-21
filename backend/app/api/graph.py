@@ -1,6 +1,39 @@
 """
 Graph-related API routes
-Uses a project context mechanism with server-side persistent state
+========================
+
+Implements the two-step knowledge-graph pipeline:
+
+Step 1 — ``POST /api/graph/ontology/generate``
+    Accept one or more document files (PDF / Markdown / TXT) plus a plain-text
+    *simulation requirement*, extract the text, then ask the LLM to produce an
+    entity/relationship ontology.  A :class:`~app.models.project.Project` is
+    persisted on disk so subsequent calls can reference it by ``project_id``.
+
+Step 2 — ``POST /api/graph/build``
+    Read the previously extracted text and ontology from disk, split it into
+    overlapping chunks, and stream each chunk into a Zep knowledge graph via
+    :class:`~app.services.graph_builder.GraphBuilderService`.  The build runs
+    in a background daemon thread; progress is tracked via
+    :class:`~app.models.task.TaskManager` and polled via
+    ``GET /api/graph/task/<task_id>``.
+
+Additional endpoints
+--------------------
+- ``GET    /api/graph/project/<project_id>``       — retrieve project metadata
+- ``GET    /api/graph/project/list``               — list all projects
+- ``DELETE /api/graph/project/<project_id>``       — remove project directory
+- ``POST   /api/graph/project/<project_id>/reset`` — revert project to ONTOLOGY_GENERATED
+- ``GET    /api/graph/task/<task_id>``             — poll background task progress
+- ``GET    /api/graph/tasks``                      — list all tasks
+- ``GET    /api/graph/data/<graph_id>``            — raw node/edge data from Zep
+- ``DELETE /api/graph/delete/<graph_id>``          — remove a Zep graph
+
+Server-side state model
+-----------------------
+All project state is stored as JSON under
+``backend/uploads/projects/<project_id>/``.  No database is required.
+The frontend only needs to pass the ``project_id`` between API 1 and API 2.
 """
 
 import os
@@ -15,6 +48,8 @@ from ..services.graph_builder import GraphBuilderService
 from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
+from ..utils.response import error_response
+from ..utils.validators import BuildGraphRequest, parse_request
 from ..models.task import TaskManager, TaskStatus
 from ..models.project import ProjectManager, ProjectStatus
 
@@ -23,7 +58,17 @@ logger = get_logger('mirofish.api')
 
 
 def allowed_file(filename: str) -> bool:
-    """Check whether the file extension is allowed"""
+    """Check whether the file extension is in the server's allow-list.
+
+    Args:
+        filename: The original filename supplied by the client.  Can be
+            ``None`` or an empty string, in which case ``False`` is returned.
+
+    Returns:
+        ``True`` when the extension (lower-cased, without the leading dot)
+        is present in :attr:`~app.config.Config.ALLOWED_EXTENSIONS`
+        (``{'pdf', 'md', 'txt', 'markdown'}``).
+    """
     if not filename or '.' not in filename:
         return False
     ext = os.path.splitext(filename)[1].lower().lstrip('.')
@@ -247,11 +292,7 @@ def generate_ontology():
         })
         
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== API 2: Build graph ==============
@@ -293,16 +334,14 @@ def build_graph():
                 "error": "Configuration error: " + "; ".join(errors)
             }), 500
         
-        # Parse request
+        # Parse and validate request body
         data = request.get_json() or {}
-        project_id = data.get('project_id')
-        logger.debug(f"Request parameters: project_id={project_id}")
+        validated, err = parse_request(BuildGraphRequest, data)
+        if err:
+            return jsonify({"success": False, "error": err}), 400
         
-        if not project_id:
-            return jsonify({
-                "success": False,
-                "error": "Please provide project_id"
-            }), 400
+        project_id = validated.project_id
+        logger.debug(f"Request parameters: project_id={project_id}")
         
         # Get project
         project = ProjectManager.get_project(project_id)
@@ -335,10 +374,10 @@ def build_graph():
             project.graph_build_task_id = None
             project.error = None
         
-        # Get configuration
+        # Get configuration – prefer validated values when explicitly provided
         graph_name = data.get('graph_name', project.name or 'MiroFish Graph')
-        chunk_size = data.get('chunk_size', project.chunk_size or Config.DEFAULT_CHUNK_SIZE)
-        chunk_overlap = data.get('chunk_overlap', project.chunk_overlap or Config.DEFAULT_CHUNK_OVERLAP)
+        chunk_size = validated.chunk_size if validated.chunk_size is not None else (project.chunk_size or Config.DEFAULT_CHUNK_SIZE)
+        chunk_overlap = validated.chunk_overlap if validated.chunk_overlap is not None else (project.chunk_overlap or Config.DEFAULT_CHUNK_OVERLAP)
         
         # Update project configuration
         project.chunk_size = chunk_size
@@ -517,11 +556,7 @@ def build_graph():
         })
         
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Task query endpoints ==============
@@ -582,11 +617,7 @@ def get_graph_data(graph_id: str):
         })
         
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @graph_bp.route('/delete/<graph_id>', methods=['DELETE'])
@@ -610,8 +641,4 @@ def delete_graph(graph_id: str):
         })
         
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500

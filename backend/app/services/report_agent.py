@@ -1,12 +1,53 @@
 """
 Report Agent Service
-Implement ReACT mode simulation report generation using LangChain + Zep
+====================
 
-Features:
-1. Generate reports based on simulation requirements and Zep graph information
-2. Plan the outline structure first, then generate section by section
-3. Each section uses ReACT multi-round thinking and reflection mode
-4. Support dialogue with users, autonomously calling retrieval tools during conversations
+Implements a **ReACT** (Reason + Act) multi-section report generation loop
+using an OpenAI-compatible LLM together with four Zep retrieval tools.
+
+Pipeline
+--------
+1. **Planning** — ask the LLM to produce a structured :class:`ReportOutline`
+   (title + N section headers) given the simulation requirement and a sample
+   of graph facts.
+
+2. **Section generation** — for each section the agent iterates through up to
+   ``REPORT_AGENT_MAX_TOOL_CALLS`` ReACT rounds:
+   - *Think*: LLM produces a reasoning step.
+   - *Act*  : LLM calls one of the four retrieval tools.
+   - *Observe*: Tool result is appended to the context.
+   Then the LLM writes the final section text from the accumulated evidence.
+
+3. **Reflection** — optional post-generation self-critique round that may
+   augment the section with additional facts.
+
+Tools
+-----
+``insight_forge``
+    Hybrid deep retrieval: auto-generates sub-questions, searches nodes/edges,
+    summarises insights.
+``panorama_search``
+    Broad search including expired content; returns all matching entities.
+``quick_search``
+    Fast keyword/semantic search; returns the top-K most relevant facts.
+``interview_agents``
+    Send a question to OASIS agents and receive in-character responses.
+
+Auxiliary classes
+-----------------
+- :class:`ReportLogger`        — writes structured JSONL to ``agent_log.jsonl``
+- :class:`ReportConsoleLogger` — writes human-readable log to ``console.log``
+- :class:`ReportStatus`        — ``PENDING / GENERATING / COMPLETED / FAILED``
+- :class:`ReportSection`       — a single section (title + content)
+- :class:`ReportOutline`       — ordered list of sections + overall title
+- :class:`Report`              — the complete report record persisted to disk
+
+New additions
+-------------
+- :meth:`ReportManager.render_html` — zero-dependency Markdown → HTML renderer
+  that embeds an evidence badge when ``evidence_summary`` is present.
+- Module-level :func:`_inline` — apply bold / italic / code / link transforms
+  on a single line of Markdown text.
 """
 
 import os
@@ -450,6 +491,7 @@ class Report:
     created_at: str = ""
     completed_at: str = ""
     error: Optional[str] = None
+    evidence_summary: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -462,7 +504,8 @@ class Report:
             "markdown_content": self.markdown_content,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
-            "error": self.error
+            "error": self.error,
+            "evidence_summary": self.evidence_summary,
         }
 
 
@@ -1720,6 +1763,12 @@ class ReportAgent:
                     total_time_seconds=total_time_seconds
                 )
             
+            # Compute and persist prediction evidence summary
+            try:
+                report.evidence_summary = ReportManager.compute_evidence_summary(report_id)
+            except Exception as ev_err:
+                logger.warning(f"Evidence summary computation failed (non-fatal): {ev_err}")
+            
             # Save the final report
             ReportManager.save_report(report)
             ReportManager.update_progress(
@@ -2494,7 +2543,8 @@ class ReportManager:
             markdown_content=markdown_content,
             created_at=data.get('created_at', ''),
             completed_at=data.get('completed_at', ''),
-            error=data.get('error')
+            error=data.get('error'),
+            evidence_summary=data.get('evidence_summary'),
         )
     
     @classmethod
@@ -2546,6 +2596,40 @@ class ReportManager:
         return reports[:limit]
     
     @classmethod
+    def compute_evidence_summary(cls, report_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse the agent log for *report_id* and return a prediction evidence summary.
+
+        The summary is derived from ``agent_log.jsonl`` and includes:
+        - total_tool_calls
+        - unique_tools_used
+        - facts_retrieved
+        - agents_interviewed
+        - evidence_score  (0–100)
+        - is_evidence_based
+
+        Returns ``None`` when no agent log exists (e.g. report still generating).
+        """
+        from ..utils.prediction_evaluator import PredictionEvidenceTracker
+
+        log_path = cls._get_agent_log_path(report_id)
+        if not os.path.exists(log_path):
+            return None
+
+        entries = []
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+        evidence = PredictionEvidenceTracker.compute(report_id, entries)
+        return evidence.to_dict()
+
+    @classmethod
     def delete_report(cls, report_id: str) -> bool:
         """Delete a report (entire folder)"""
         import shutil
@@ -2571,3 +2655,177 @@ class ReportManager:
             deleted = True
         
         return deleted
+
+    # ── HTML export ────────────────────────────────────────────────────────────
+
+    @classmethod
+    def render_html(cls, report: "Report") -> str:
+        """
+        Convert a completed report's Markdown content to a self-contained HTML page.
+
+        Uses only Python's standard library (``re``, ``html``) so there are no
+        additional dependencies.  The output includes:
+
+        - A minimal CSS stylesheet (fonts, spacing, code blocks, blockquotes)
+        - The report title and evidence badge when evidence_summary is present
+        - Section headings, bold text, lists, and blockquotes rendered correctly
+
+        Args:
+            report: A :class:`Report` instance with ``markdown_content`` set.
+
+        Returns:
+            A UTF-8 HTML string ready to be served or saved.
+        """
+        import re as _re
+        import html as _html
+
+        md = report.markdown_content or ""
+
+        # ── Markdown → HTML conversion (essential subset) ──────────────────
+
+        # Escape raw HTML entities first (so we don't double-escape later)
+        # We convert the markdown line-by-line so we can handle block-level elements.
+        lines = md.split("\n")
+        html_lines: List[str] = []
+        in_ul = False  # inside unordered list block
+
+        def flush_ul():
+            nonlocal in_ul
+            if in_ul:
+                html_lines.append("</ul>")
+                in_ul = False
+
+        for line in lines:
+            raw = line.rstrip()
+
+            # --- Headings ---
+            h_match = _re.match(r'^(#{1,6})\s+(.*)', raw)
+            if h_match:
+                flush_ul()
+                level = len(h_match.group(1))
+                text = _inline(h_match.group(2))
+                html_lines.append(f"<h{level}>{text}</h{level}>")
+                continue
+
+            # --- Blockquote ---
+            if raw.lstrip().startswith("> "):
+                flush_ul()
+                content = _inline(raw.lstrip()[2:])
+                html_lines.append(f"<blockquote>{content}</blockquote>")
+                continue
+
+            # --- Unordered list item (- or * ) ---
+            li_match = _re.match(r'^[\-\*]\s+(.*)', raw)
+            if li_match:
+                if not in_ul:
+                    html_lines.append("<ul>")
+                    in_ul = True
+                html_lines.append(f"  <li>{_inline(li_match.group(1))}</li>")
+                continue
+
+            # --- Ordered list item (1. …) ---
+            oli_match = _re.match(r'^\d+\.\s+(.*)', raw)
+            if oli_match:
+                flush_ul()
+                html_lines.append(f"<ol><li>{_inline(oli_match.group(1))}</li></ol>")
+                continue
+
+            # --- Horizontal rule ---
+            if _re.match(r'^[-*_]{3,}$', raw.strip()):
+                flush_ul()
+                html_lines.append("<hr/>")
+                continue
+
+            # --- Blank line → paragraph separator ---
+            if raw.strip() == "":
+                flush_ul()
+                html_lines.append("")
+                continue
+
+            # --- Normal paragraph text ---
+            flush_ul()
+            html_lines.append(f"<p>{_inline(raw)}</p>")
+
+        flush_ul()
+        body_html = "\n".join(html_lines)
+
+        # ── Evidence badge ──────────────────────────────────────────────────
+        badge_html = ""
+        ev = report.evidence_summary or {}
+        if ev:
+            score = ev.get("evidence_score", 0)
+            is_ok = ev.get("is_evidence_based", False)
+            color = "#28a745" if is_ok else "#dc3545"
+            label = "Evidence-Based" if is_ok else "Low Evidence"
+            tools = ", ".join(ev.get("unique_tools_used", []))
+            badge_html = f"""
+<div class="evidence-badge">
+  <span class="badge" style="background:{color};">{label}</span>
+  <span class="ev-detail">Score: <strong>{score:.1f}/100</strong></span>
+  <span class="ev-detail">Tool calls: <strong>{ev.get('total_tool_calls', 0)}</strong></span>
+  <span class="ev-detail">Facts: <strong>{ev.get('facts_retrieved', 0)}</strong></span>
+  <span class="ev-detail">Agents interviewed: <strong>{ev.get('agents_interviewed', 0)}</strong></span>
+  <span class="ev-detail ev-tools">Tools: {_html.escape(tools)}</span>
+</div>"""
+
+        title = _html.escape(report.outline.title if report.outline else report.report_id)
+
+        css = """
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 900px;
+           margin: 0 auto; padding: 2rem; color: #1a1a1a; background: #fff; }
+    h1 { font-size: 2em; border-bottom: 3px solid #0066cc; padding-bottom: .4em; }
+    h2 { font-size: 1.5em; margin-top: 2em; border-left: 4px solid #0066cc;
+         padding-left: .6em; }
+    h3 { font-size: 1.2em; color: #333; }
+    blockquote { border-left: 4px solid #aaa; margin: 1em 0; padding: .5em 1em;
+                 background: #f8f8f8; color: #555; font-style: italic; }
+    ul, ol { padding-left: 1.5em; }
+    li { margin: .3em 0; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 1.5em 0; }
+    strong { color: #000; }
+    code { background: #f0f0f0; padding: .1em .3em; border-radius: 3px; font-size: .9em; }
+    .evidence-badge { background: #f0f4ff; border: 1px solid #c7d4f0;
+                      border-radius: 6px; padding: .6em 1em; margin: 1.2em 0;
+                      display: flex; flex-wrap: wrap; gap: .8em; align-items: center; }
+    .badge { color: #fff; padding: .25em .6em; border-radius: 4px;
+             font-size: .85em; font-weight: bold; }
+    .ev-detail { font-size: .85em; color: #444; }
+    .ev-tools { color: #666; }
+    p { line-height: 1.7; margin: .5em 0; }
+"""
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{title}</title>
+  <style>{css}
+  </style>
+</head>
+<body>
+{badge_html}
+{body_html}
+</body>
+</html>"""
+
+
+def _inline(text: str) -> str:
+    """Apply inline Markdown transformations (bold, italic, code, links)."""
+    import re as _re
+    import html as _html
+
+    # Escape HTML entities in the raw text first, then re-apply Markdown tags
+    escaped = _html.escape(text)
+
+    # **bold**
+    escaped = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', escaped)
+    # *italic* or _italic_
+    escaped = _re.sub(r'\*(.+?)\*', r'<em>\1</em>', escaped)
+    escaped = _re.sub(r'_(.+?)_', r'<em>\1</em>', escaped)
+    # `code`
+    escaped = _re.sub(r'`(.+?)`', r'<code>\1</code>', escaped)
+    # [text](url)
+    escaped = _re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', escaped)
+    return escaped

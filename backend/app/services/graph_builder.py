@@ -1,6 +1,26 @@
 """
 Graph Building Service
-Interface 2: Build a Standalone Graph using the Zep API
+======================
+
+Step 2 of the knowledge-graph pipeline: stream document text into a Zep
+Standalone Graph and wait for Zep to extract entities and relationships.
+
+Pipeline
+--------
+1. **Create** a new named Zep graph (returns ``graph_id``).
+2. **Set ontology** — upload the entity/relationship type definitions produced
+   by :class:`~app.services.ontology_generator.OntologyGenerator`.
+3. **Add episodes** — send text chunks as *EpisodeData* objects in small
+   batches (default: 3 chunks per batch).  Zep processes each episode
+   asynchronously and populates the graph with nodes and edges.
+4. **Wait** — poll each episode's status until ``PROCESSED`` (or timeout).
+5. **Retrieve** graph statistics (node and edge counts) as confirmation.
+
+Concurrency
+-----------
+:meth:`GraphBuilderService._wait_for_episodes` polls episode status using a
+``threading.Event`` timeout to avoid blocking indefinitely.  The default
+wait timeout is 10 minutes; pass a custom value if large corpora take longer.
 """
 
 import os

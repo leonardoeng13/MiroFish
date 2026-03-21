@@ -1,8 +1,24 @@
 """Zep Graph paginated read utility.
+====================================
 
 Zep's node/edge list APIs use UUID-cursor pagination.
 This module wraps the auto-pagination logic (with per-page retry) and
 transparently returns the complete list to callers.
+
+Design notes
+------------
+- :data:`_MAX_NODES` caps the total nodes fetched in one call to avoid
+  runaway memory usage on very large graphs.
+- Each page fetch is retried up to :data:`_DEFAULT_MAX_RETRIES` times with
+  exponential back-off on transient errors (``ConnectionError``,
+  ``TimeoutError``, Zep ``InternalServerError``).
+- Two public convenience functions expose the two Zep paged list APIs:
+
+  :func:`fetch_all_nodes`
+      Read all nodes from a Zep graph, respecting ``_MAX_NODES``.
+
+  :func:`fetch_all_edges`
+      Read all edges (facts / relationships) from a Zep graph.
 """
 
 from __future__ import annotations

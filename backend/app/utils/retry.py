@@ -1,6 +1,34 @@
 """
 API call retry mechanism
-Handles retry logic for external API calls such as LLMs
+=========================
+
+Provides two retry utilities for wrapping unreliable external API calls
+(primarily LLM and Zep):
+
+:func:`retry_with_backoff`
+    A decorator factory.  Wrap any synchronous function and it will be
+    retried up to ``max_retries`` times with exponential back-off and
+    optional random jitter::
+
+        @retry_with_backoff(max_retries=3, exceptions=(openai.RateLimitError,))
+        def call_llm():
+            ...
+
+:func:`retry_with_backoff_async`
+    Async variant of the decorator (``await``-friendly).
+
+:class:`RetryableAPIClient`
+    Object-oriented wrapper for cases where the retry parameters should be
+    encapsulated in a reusable client instance.  Supports both single calls
+    (:meth:`~RetryableAPIClient.call_with_retry`) and batch processing
+    (:meth:`~RetryableAPIClient.call_batch_with_retry`).
+
+Back-off formula
+----------------
+``delay = min(initial_delay * backoff_factor^attempt, max_delay)``
+
+When ``jitter=True`` (the default) the delay is further multiplied by a
+uniform random factor in ``[0.5, 1.5]`` to prevent thundering-herd issues.
 """
 
 import time

@@ -1,6 +1,48 @@
 """
 Simulation-related API routes
-Step2: Zep entity reading & filtering, OASIS simulation preparation and execution (fully automated)
+==============================
+
+Implements the full OASIS social-media simulation pipeline.
+
+Pipeline overview (steps 1–4)
+------------------------------
+Step 1 — Entity retrieval (``/entities/…``)
+    Read typed entities and their edges from a Zep knowledge graph via
+    :class:`~app.services.zep_entity_reader.ZepEntityReader`.  Used by the
+    frontend to display the graph before selecting agents.
+
+Step 2 — Profile generation (``POST /prepare``)
+    Convert Zep entities into OASIS agent profiles
+    (:class:`~app.services.oasis_profile_generator.OasisProfileGenerator`)
+    and write a simulation configuration YAML.  Profiles are persisted under
+    ``uploads/simulations/<simulation_id>/``.
+
+Step 3 — Simulation execution (``POST /run``)
+    Launch the OASIS simulation process in the background via
+    :class:`~app.services.simulation_runner.SimulationRunner`.  Each agent
+    takes actions on Twitter and/or Reddit according to the scenario.
+
+Step 4 — Introspection / interview (``POST /interview``)
+    Send a natural-language question to a running agent and get back its
+    in-character response.  The interview prompt is prefixed with
+    :data:`INTERVIEW_PROMPT_PREFIX` to suppress tool calls.
+
+Management endpoints
+--------------------
+- ``POST   /api/simulation/create``              — create a new simulation record
+- ``GET    /api/simulation/<id>``                — fetch simulation state
+- ``DELETE /api/simulation/<id>``                — remove simulation and all data
+- ``POST   /api/simulation/stop``                — stop a running simulation
+- ``GET    /api/simulation/list``                — list all simulations
+- ``GET    /api/simulation/<id>/actions``        — agent actions log
+- ``GET    /api/simulation/<id>/round-summary``  — per-round statistics
+
+Architecture note
+-----------------
+Simulation processes are managed as sub-processes (not threads) so that
+Python's GIL does not block the OASIS async loop.  IPC between the Flask
+server and the simulation process uses a lightweight JSON-over-socket
+protocol (:class:`~app.services.simulation_ipc.SimulationIPCClient`).
 """
 
 import os
@@ -14,6 +56,8 @@ from ..services.oasis_profile_generator import OasisProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..utils.logger import get_logger
+from ..utils.response import error_response
+from ..utils.validators import CreateSimulationRequest, parse_request
 from ..models.project import ProjectManager
 
 logger = get_logger('mirofish.api.simulation')
@@ -82,11 +126,7 @@ def get_graph_entities(graph_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get graph entities: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/entities/<graph_id>/<entity_uuid>', methods=['GET'])
@@ -115,11 +155,7 @@ def get_entity_detail(graph_id: str, entity_uuid: str):
         
     except Exception as e:
         logger.error(f"Failed to get entity details: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/entities/<graph_id>/by-type/<entity_type>', methods=['GET'])
@@ -152,11 +188,7 @@ def get_entities_by_type(graph_id: str, entity_type: str):
         
     except Exception as e:
         logger.error(f"Failed to get entities: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Simulation management endpoints ==============
@@ -193,12 +225,11 @@ def create_simulation():
     try:
         data = request.get_json() or {}
         
-        project_id = data.get('project_id')
-        if not project_id:
-            return jsonify({
-                "success": False,
-                "error": "Please provide project_id"
-            }), 400
+        validated, err = parse_request(CreateSimulationRequest, data)
+        if err:
+            return jsonify({"success": False, "error": err}), 400
+        
+        project_id = validated.project_id
         
         project = ProjectManager.get_project(project_id)
         if not project:
@@ -207,7 +238,7 @@ def create_simulation():
                 "error": f"Project not found: {project_id}"
             }), 404
         
-        graph_id = data.get('graph_id') or project.graph_id
+        graph_id = validated.graph_id or project.graph_id
         if not graph_id:
             return jsonify({
                 "success": False,
@@ -218,8 +249,8 @@ def create_simulation():
         state = manager.create_simulation(
             project_id=project_id,
             graph_id=graph_id,
-            enable_twitter=data.get('enable_twitter', True),
-            enable_reddit=data.get('enable_reddit', True),
+            enable_twitter=validated.enable_twitter,
+            enable_reddit=validated.enable_reddit,
         )
         
         return jsonify({
@@ -229,11 +260,7 @@ def create_simulation():
         
     except Exception as e:
         logger.error(f"Failed to create simulation: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 def _check_simulation_prepared(simulation_id: str) -> tuple:
@@ -627,11 +654,7 @@ def prepare_simulation():
         
     except Exception as e:
         logger.error(f"Failed to start preparation task: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/prepare/status', methods=['POST'])
@@ -773,11 +796,7 @@ def get_simulation(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get simulation status: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/list', methods=['GET'])
@@ -802,11 +821,54 @@ def list_simulations():
         
     except Exception as e:
         logger.error(f"Failed to list simulations: {str(e)}")
+        return jsonify(error_response(str(e), 500, e)), 500
+
+
+@simulation_bp.route('/<simulation_id>', methods=['DELETE'])
+def delete_simulation(simulation_id: str):
+    """
+    Delete a simulation and all its associated data.
+
+    Removes the simulation state, profiles, configuration files, and run
+    state from disk.  The simulation must not be currently RUNNING; if it is,
+    stop it first via ``POST /api/simulation/stop``.
+
+    Returns:
+        200 – simulation deleted successfully
+        404 – simulation not found
+        409 – simulation is currently running (stop it first)
+    """
+    try:
+        manager = SimulationManager()
+        state = manager.get_simulation(simulation_id)
+
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": f"Simulation not found: {simulation_id}"
+            }), 404
+
+        if state.status == SimulationStatus.RUNNING:
+            return jsonify({
+                "success": False,
+                "error": "Cannot delete a running simulation. Stop it first via POST /api/simulation/stop."
+            }), 409
+
+        deleted = manager.delete_simulation(simulation_id)
+        if not deleted:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to delete simulation: {simulation_id}"
+            }), 500
+
         return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+            "success": True,
+            "message": f"Simulation deleted: {simulation_id}"
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to delete simulation: {str(e)}")
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 def _get_report_id_for_simulation(simulation_id: str) -> str:
@@ -976,11 +1038,7 @@ def get_simulation_history():
         
     except Exception as e:
         logger.error(f"Failed to get simulation history: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/profiles', methods=['GET'])
@@ -1014,11 +1072,7 @@ def get_simulation_profiles(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get profiles: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/profiles/realtime', methods=['GET'])
@@ -1124,11 +1178,7 @@ def get_simulation_profiles_realtime(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get profiles in real time: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/config/realtime', methods=['GET'])
@@ -1244,11 +1294,7 @@ def get_simulation_config_realtime(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get config in real time: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/config', methods=['GET'])
@@ -1280,11 +1326,7 @@ def get_simulation_config(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get configuration: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/config/download', methods=['GET'])
@@ -1309,11 +1351,7 @@ def download_simulation_config(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to download configuration: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/script/<script_name>/download', methods=['GET'])
@@ -1361,11 +1399,7 @@ def download_simulation_script(script_name: str):
         
     except Exception as e:
         logger.error(f"Failed to download script: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Profile generation endpoint (standalone use) ==============
@@ -1435,11 +1469,7 @@ def generate_profiles():
         
     except Exception as e:
         logger.error(f"Failed to generate profiles: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Simulation run control endpoints ==============
@@ -1631,11 +1661,7 @@ def start_simulation():
         
     except Exception as e:
         logger.error(f"Failed to start simulation: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/stop', methods=['POST'])
@@ -1690,11 +1716,7 @@ def stop_simulation():
         
     except Exception as e:
         logger.error(f"Failed to stop simulation: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Real-time status monitoring endpoints ==============
@@ -1750,11 +1772,7 @@ def get_run_status(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get run status: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/run-status/detail', methods=['GET'])
@@ -1851,11 +1869,7 @@ def get_run_status_detail(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get detailed status: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/actions', methods=['GET'])
@@ -1905,11 +1919,7 @@ def get_simulation_actions(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get action history: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/timeline', methods=['GET'])
@@ -1945,11 +1955,7 @@ def get_simulation_timeline(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get timeline: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/agent-stats', methods=['GET'])
@@ -1972,11 +1978,7 @@ def get_agent_stats(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get Agent statistics: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Database query endpoints ==============
@@ -2052,11 +2054,7 @@ def get_simulation_posts(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get posts: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/<simulation_id>/comments', methods=['GET'])
@@ -2127,11 +2125,7 @@ def get_simulation_comments(simulation_id: str):
         
     except Exception as e:
         logger.error(f"Failed to get comments: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Interview endpoints ==============
@@ -2259,11 +2253,7 @@ def interview_agent():
         
     except Exception as e:
         logger.error(f"Interview failed: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/interview/batch', methods=['POST'])
@@ -2397,11 +2387,7 @@ def interview_agents_batch():
 
     except Exception as e:
         logger.error(f"Batch Interview failed: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/interview/all', methods=['POST'])
@@ -2500,11 +2486,7 @@ def interview_all_agents():
 
     except Exception as e:
         logger.error(f"Global Interview failed: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/interview/history', methods=['POST'])
@@ -2572,11 +2554,7 @@ def get_interview_history():
 
     except Exception as e:
         logger.error(f"Failed to get Interview history: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/env-status', methods=['POST'])
@@ -2637,11 +2615,7 @@ def get_env_status():
 
     except Exception as e:
         logger.error(f"Failed to get environment status: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @simulation_bp.route('/close-env', methods=['POST'])
@@ -2708,8 +2682,4 @@ def close_simulation_env():
         
     except Exception as e:
         logger.error(f"Failed to close environment: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
