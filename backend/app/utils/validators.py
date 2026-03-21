@@ -16,7 +16,7 @@ Adding a new validator
 """
 
 from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -115,8 +115,12 @@ def parse_request(model_class, data: dict):
 
     Returns ``(instance, None)`` on success or ``(None, error_message)`` on
     validation failure so callers can do a simple two-value unpack.
+
+    Only :class:`pydantic.ValidationError` is caught; other exceptions
+    (programming errors, unexpected types, etc.) are re-raised so they
+    fail loudly rather than being silently converted to a 400 response.
     """
     try:
         return model_class(**data), None
-    except Exception as exc:  # pydantic.ValidationError or similar
+    except ValidationError as exc:
         return None, str(exc)
