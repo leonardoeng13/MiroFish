@@ -1113,7 +1113,7 @@ Important:
                 ]
                 writer.writerow(row)
         
-logger.info(f"Saved {len(profiles)} Twitter profiles to {file_path} (OASIS CSV format)")
+        logger.info(f"Saved {len(profiles)} Twitter profiles to {file_path} (OASIS CSV format)")
     
     def _normalize_gender(self, gender: Optional[str]) -> str:
         """

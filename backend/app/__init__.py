@@ -71,7 +71,41 @@ def create_app(config_class=Config):
     # Health check
     @app.route('/health')
     def health():
-        return {'status': 'ok', 'service': 'MiroFish Backend'}
+        from datetime import datetime, timezone
+        return {
+            'status': 'ok',
+            'service': 'MiroFish Backend',
+            'version': '0.1.0',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+
+    @app.route('/health/details')
+    def health_details():
+        """
+        Detailed health check.
+
+        Returns configuration status and whether required credentials are
+        present, without exposing the actual secret values.
+        """
+        from datetime import datetime, timezone
+        from .config import Config
+
+        config_errors = Config.validate()
+        config_ok = len(config_errors) == 0
+
+        return {
+            'status': 'ok' if config_ok else 'degraded',
+            'service': 'MiroFish Backend',
+            'version': '0.1.0',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'config': {
+                'llm_api_key_set': bool(Config.LLM_API_KEY),
+                'zep_api_key_set': bool(Config.ZEP_API_KEY),
+                'llm_base_url': Config.LLM_BASE_URL,
+                'llm_model': Config.LLM_MODEL_NAME,
+                'errors': config_errors,
+            },
+        }
     
     if should_log_startup:
         logger.info("MiroFish Backend startup complete")

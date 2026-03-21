@@ -15,6 +15,8 @@ from ..services.graph_builder import GraphBuilderService
 from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
+from ..utils.response import error_response
+from ..utils.validators import BuildGraphRequest, parse_request
 from ..models.task import TaskManager, TaskStatus
 from ..models.project import ProjectManager, ProjectStatus
 
@@ -247,11 +249,7 @@ def generate_ontology():
         })
         
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== API 2: Build graph ==============
@@ -293,16 +291,14 @@ def build_graph():
                 "error": "Configuration error: " + "; ".join(errors)
             }), 500
         
-        # Parse request
+        # Parse and validate request body
         data = request.get_json() or {}
-        project_id = data.get('project_id')
-        logger.debug(f"Request parameters: project_id={project_id}")
+        validated, err = parse_request(BuildGraphRequest, data)
+        if err:
+            return jsonify({"success": False, "error": err}), 400
         
-        if not project_id:
-            return jsonify({
-                "success": False,
-                "error": "Please provide project_id"
-            }), 400
+        project_id = validated.project_id
+        logger.debug(f"Request parameters: project_id={project_id}")
         
         # Get project
         project = ProjectManager.get_project(project_id)
@@ -335,10 +331,10 @@ def build_graph():
             project.graph_build_task_id = None
             project.error = None
         
-        # Get configuration
+        # Get configuration – prefer validated values when explicitly provided
         graph_name = data.get('graph_name', project.name or 'MiroFish Graph')
-        chunk_size = data.get('chunk_size', project.chunk_size or Config.DEFAULT_CHUNK_SIZE)
-        chunk_overlap = data.get('chunk_overlap', project.chunk_overlap or Config.DEFAULT_CHUNK_OVERLAP)
+        chunk_size = validated.chunk_size if validated.chunk_size is not None else (project.chunk_size or Config.DEFAULT_CHUNK_SIZE)
+        chunk_overlap = validated.chunk_overlap if validated.chunk_overlap is not None else (project.chunk_overlap or Config.DEFAULT_CHUNK_OVERLAP)
         
         # Update project configuration
         project.chunk_size = chunk_size
@@ -517,11 +513,7 @@ def build_graph():
         })
         
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 # ============== Task query endpoints ==============
@@ -582,11 +574,7 @@ def get_graph_data(graph_id: str):
         })
         
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
 
 
 @graph_bp.route('/delete/<graph_id>', methods=['DELETE'])
@@ -610,8 +598,4 @@ def delete_graph(graph_id: str):
         })
         
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(error_response(str(e), 500, e)), 500
