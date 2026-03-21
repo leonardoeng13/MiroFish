@@ -1389,7 +1389,7 @@ class ReportAgent:
                     })
                     continue
 
-                # 正常结束
+                # Normal completion
                 final_answer = response.split("Final Answer:")[-1].strip()
                 logger.info(f"Section {section.title} generation complete (tool calls: {tool_calls_count})")
 
