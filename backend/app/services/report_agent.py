@@ -827,58 +827,58 @@ REACT_FORCE_FINAL_MSG = "The tool call limit has been reached. Please output Fin
 # ── Chat prompt ──
 
 CHAT_SYSTEM_PROMPT_TEMPLATE = """\
-你是一个简洁高效的模拟预测助手。
+You are a concise and efficient simulation prediction assistant.
 
-【背景】
-预测条件: {simulation_requirement}
+【Background】
+Prediction condition: {simulation_requirement}
 
-【已生成的分析报告】
+【Generated Analysis Report】
 {report_content}
 
-【规则】
-1. 优先基于上述报告内容回答问题
-2. 直接回答问题，避免冗长的思考论述
-3. 仅在报告内容不足以回答时，才调用工具检索更多数据
-4. 回答要简洁、清晰、有条理
+【Rules】
+1. Prioritize answering questions based on the above report content
+2. Answer questions directly, avoid lengthy thinking discussions
+3. Only call tools to retrieve more data when report content is insufficient to answer
+4. Answers should be concise, clear, and organized
 
-【可用工具】（仅在需要时使用，最多调用1-2次）
+【Available Tools】(Only use when needed, call at most 1-2 times)
 {tools_description}
 
-【工具调用格式】
+【Tool Call Format】
 <tool_call>
-{{"name": "工具名称", "parameters": {{"参数名": "参数值"}}}}
+{{"name": "tool_name", "parameters": {{"param_name": "param_value"}}}}
 </tool_call>
 
-【回答风格】
-- 简洁直接，不要长篇大论
-- 使用 > 格式引用关键内容
-- 优先给出结论，再解释原因"""
+【Answer Style】
+- Concise and direct, no lengthy discussions
+- Use > format to quote key content
+- Give conclusions first, then explain reasons"""
 
-CHAT_OBSERVATION_SUFFIX = "\n\n请简洁回答问题。"
+CHAT_OBSERVATION_SUFFIX = "\n\nPlease answer the question concisely."
 
 
 # ═══════════════════════════════════════════════════════════════
-# ReportAgent 主类
+# ReportAgent main class
 # ═══════════════════════════════════════════════════════════════
 
 
 class ReportAgent:
     """
-    Report Agent - 模拟报告生成Agent
+    Report Agent - Simulation report generation Agent
 
-    采用ReACT（Reasoning + Acting）模式：
-    1. 规划阶段：分析模拟需求，规划报告目录结构
-    2. 生成阶段：逐章节生成内容，每章节可多次调用工具获取信息
-    3. 反思阶段：检查内容完整性和准确性
+    Using ReACT (Reasoning + Acting) mode:
+    1. Planning phase: Analyze simulation requirements, plan report outline structure
+    2. Generation phase: Generate content section by section, each section can call tools multiple times to get information
+    3. Reflection phase: Check content completeness and accuracy
     """
     
-    # 最大工具调用次数（每个章节）
+    # Maximum tool calls per section
     MAX_TOOL_CALLS_PER_SECTION = 5
     
-    # 最大反思轮数
+    # Maximum reflection rounds
     MAX_REFLECTION_ROUNDS = 3
     
-    # 对话中的最大工具调用次数
+    # Maximum tool calls per chat
     MAX_TOOL_CALLS_PER_CHAT = 2
     
     def __init__(
@@ -890,14 +890,14 @@ class ReportAgent:
         zep_tools: Optional[ZepToolsService] = None
     ):
         """
-        初始化Report Agent
+        Initialize Report Agent
         
         Args:
-            graph_id: 图谱ID
-            simulation_id: 模拟ID
-            simulation_requirement: 模拟需求描述
-            llm_client: LLM客户端（可选）
-            zep_tools: Zep工具服务（可选）
+            graph_id: Graph ID
+            simulation_id: Simulation ID
+            simulation_requirement: Simulation requirement description
+            llm_client: LLM client (optional)
+            zep_tools: Zep tools service (optional)
         """
         self.graph_id = graph_id
         self.simulation_id = simulation_id
@@ -906,66 +906,66 @@ class ReportAgent:
         self.llm = llm_client or LLMClient()
         self.zep_tools = zep_tools or ZepToolsService()
         
-        # 工具定义
+        # Tool definitions
         self.tools = self._define_tools()
         
-        # 日志记录器（在 generate_report 中初始化）
+        # Logger (initialized in generate_report)
         self.report_logger: Optional[ReportLogger] = None
-        # 控制台日志记录器（在 generate_report 中初始化）
+        # Console logger (initialized in generate_report)
         self.console_logger: Optional[ReportConsoleLogger] = None
         
-        logger.info(f"ReportAgent 初始化完成: graph_id={graph_id}, simulation_id={simulation_id}")
+        logger.info(f"ReportAgent initialization completed: graph_id={graph_id}, simulation_id={simulation_id}")
     
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
-        """定义可用工具"""
+        """Define available tools"""
         return {
             "insight_forge": {
                 "name": "insight_forge",
                 "description": TOOL_DESC_INSIGHT_FORGE,
                 "parameters": {
-                    "query": "你想深入分析的问题或话题",
-                    "report_context": "当前报告章节的上下文（可选，有助于生成更精准的子问题）"
+                    "query": "Question or topic you want to analyze in depth",
+                    "report_context": "Current report section context (optional, helps generate more precise sub-questions)"
                 }
             },
             "panorama_search": {
                 "name": "panorama_search",
                 "description": TOOL_DESC_PANORAMA_SEARCH,
                 "parameters": {
-                    "query": "搜索查询，用于相关性排序",
-                    "include_expired": "是否包含过期/历史内容（默认True）"
+                    "query": "Search query for relevance ranking",
+                    "include_expired": "Whether to include expired/historical content (default True)"
                 }
             },
             "quick_search": {
                 "name": "quick_search",
                 "description": TOOL_DESC_QUICK_SEARCH,
                 "parameters": {
-                    "query": "搜索查询字符串",
-                    "limit": "返回结果数量（可选，默认10）"
+                    "query": "Search query string",
+                    "limit": "Number of results to return (optional, default 10)"
                 }
             },
             "interview_agents": {
                 "name": "interview_agents",
                 "description": TOOL_DESC_INTERVIEW_AGENTS,
                 "parameters": {
-                    "interview_topic": "采访主题或需求描述（如：'了解学生对宿舍甲醛事件的看法'）",
-                    "max_agents": "最多采访的Agent数量（可选，默认5，最大10）"
+                    "interview_topic": "Interview topic or requirement description (e.g., 'Understand students' views on dormitory formaldehyde incident')",
+                    "max_agents": "Maximum number of Agents to interview (optional, default 5, max 10)"
                 }
             }
         }
     
     def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], report_context: str = "") -> str:
         """
-        执行工具调用
+        Execute tool call
         
         Args:
-            tool_name: 工具名称
-            parameters: 工具参数
-            report_context: 报告上下文（用于InsightForge）
+            tool_name: Tool name
+            parameters: Tool parameters
+            report_context: Report context (for InsightForge)
             
         Returns:
-            工具执行结果（文本格式）
+            Tool execution result (text format)
         """
-        logger.info(f"执行工具: {tool_name}, 参数: {parameters}")
+        logger.info(f"Executing tool: {tool_name}, parameters: {parameters}")
         
         try:
             if tool_name == "insight_forge":
@@ -980,7 +980,7 @@ class ReportAgent:
                 return result.to_text()
             
             elif tool_name == "panorama_search":
-                # 广度搜索 - 获取全貌
+                # Panorama search - Get overview
                 query = parameters.get("query", "")
                 include_expired = parameters.get("include_expired", True)
                 if isinstance(include_expired, str):
@@ -993,7 +993,7 @@ class ReportAgent:
                 return result.to_text()
             
             elif tool_name == "quick_search":
-                # 简单搜索 - 快速检索
+                # Quick search - Fast retrieval
                 query = parameters.get("query", "")
                 limit = parameters.get("limit", 10)
                 if isinstance(limit, str):
@@ -1006,7 +1006,7 @@ class ReportAgent:
                 return result.to_text()
             
             elif tool_name == "interview_agents":
-                # 深度采访 - 调用真实的OASIS采访API获取模拟Agent的回答（双平台）
+                # Deep interview - Call real OASIS interview API to get answers from simulation Agents (dual platform)
                 interview_topic = parameters.get("interview_topic", parameters.get("query", ""))
                 max_agents = parameters.get("max_agents", 5)
                 if isinstance(max_agents, str):
@@ -1020,11 +1020,11 @@ class ReportAgent:
                 )
                 return result.to_text()
             
-            # ========== 向后兼容的旧工具（内部重定向到新工具） ==========
+            # ========== Backward compatible old tools (internally redirect to new tools) ==========
             
             elif tool_name == "search_graph":
-                # 重定向到 quick_search
-                logger.info("search_graph 已重定向到 quick_search")
+                # Redirect to quick_search
+                logger.info("search_graph has been redirected to quick_search")
                 return self._execute_tool("quick_search", parameters, report_context)
             
             elif tool_name == "get_graph_statistics":
@@ -1040,8 +1040,8 @@ class ReportAgent:
                 return json.dumps(result, ensure_ascii=False, indent=2)
             
             elif tool_name == "get_simulation_context":
-                # 重定向到 insight_forge，因为它更强大
-                logger.info("get_simulation_context 已重定向到 insight_forge")
+                # Redirect to insight_forge because it's more powerful
+                logger.info("get_simulation_context has been redirected to insight_forge")
                 query = parameters.get("query", self.simulation_requirement)
                 return self._execute_tool("insight_forge", {"query": query}, report_context)
             
@@ -1055,26 +1055,26 @@ class ReportAgent:
                 return json.dumps(result, ensure_ascii=False, indent=2)
             
             else:
-                return f"未知工具: {tool_name}。请使用以下工具之一: insight_forge, panorama_search, quick_search"
+                return f"Unknown tool: {tool_name}. Please use one of the following tools: insight_forge, panorama_search, quick_search"
                 
         except Exception as e:
-            logger.error(f"工具执行失败: {tool_name}, 错误: {str(e)}")
-            return f"工具执行失败: {str(e)}"
+            logger.error(f"Tool execution failed: {tool_name}, error: {str(e)}")
+            return f"Tool execution failed: {str(e)}"
     
-    # 合法的工具名称集合，用于裸 JSON 兜底解析时校验
+    # Valid tool names set, used for bare JSON fallback parsing validation
     VALID_TOOL_NAMES = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
 
     def _parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
         """
-        从LLM响应中解析工具调用
+        Parse tool calls from LLM response
 
-        支持的格式（按优先级）：
+        Supported formats (by priority):
         1. <tool_call>{"name": "tool_name", "parameters": {...}}</tool_call>
-        2. 裸 JSON（响应整体或单行就是一个工具调用 JSON）
+        2. Bare JSON (response as a whole or single line is a tool call JSON)
         """
         tool_calls = []
 
-        # 格式1: XML风格（标准格式）
+        # Format 1: XML-style (standard format)
         xml_pattern = r'<tool_call>\s*(\{.*?\})\s*</tool_call>'
         for match in re.finditer(xml_pattern, response, re.DOTALL):
             try:
@@ -1086,8 +1086,8 @@ class ReportAgent:
         if tool_calls:
             return tool_calls
 
-        # 格式2: 兜底 - LLM 直接输出裸 JSON（没包 <tool_call> 标签）
-        # 只在格式1未匹配时尝试，避免误匹配正文中的 JSON
+        # Format 2: Fallback - LLM directly outputs bare JSON (not wrapped in <tool_call> tags)
+        # Only try when format 1 didn't match, to avoid false matches in body text JSON
         stripped = response.strip()
         if stripped.startswith('{') and stripped.endswith('}'):
             try:
@@ -1098,7 +1098,7 @@ class ReportAgent:
             except json.JSONDecodeError:
                 pass
 
-        # 响应可能包含思考文字 + 裸 JSON，尝试提取最后一个 JSON 对象
+        # Response may contain thinking text + bare JSON, try extracting last JSON object
         json_pattern = r'(\{"(?:name|tool)"\s*:.*?\})\s*$'
         match = re.search(json_pattern, stripped, re.DOTALL)
         if match:
@@ -1112,11 +1112,11 @@ class ReportAgent:
         return tool_calls
 
     def _is_valid_tool_call(self, data: dict) -> bool:
-        """校验解析出的 JSON 是否是合法的工具调用"""
-        # 支持 {"name": ..., "parameters": ...} 和 {"tool": ..., "params": ...} 两种键名
+        """Validate if parsed JSON is a valid tool call"""
+        # Support both {"name": ..., "parameters": ...} and {"tool": ..., "params": ...} key names
         tool_name = data.get("name") or data.get("tool")
         if tool_name and tool_name in self.VALID_TOOL_NAMES:
-            # 统一键名为 name / parameters
+            # Unify key names to name / parameters
             if "tool" in data:
                 data["name"] = data.pop("tool")
             if "params" in data and "parameters" not in data:
@@ -1125,13 +1125,13 @@ class ReportAgent:
         return False
     
     def _get_tools_description(self) -> str:
-        """生成工具描述文本"""
-        desc_parts = ["可用工具："]
+        """Generate tool description text"""
+        desc_parts = ["Available tools:"]
         for name, tool in self.tools.items():
             params_desc = ", ".join([f"{k}: {v}" for k, v in tool["parameters"].items()])
             desc_parts.append(f"- {name}: {tool['description']}")
             if params_desc:
-                desc_parts.append(f"  参数: {params_desc}")
+                desc_parts.append(f"  Parameters: {params_desc}")
         return "\n".join(desc_parts)
     
     def plan_outline(
@@ -1139,29 +1139,29 @@ class ReportAgent:
         progress_callback: Optional[Callable] = None
     ) -> ReportOutline:
         """
-        规划报告大纲
+        Plan the report outline
         
-        使用LLM分析模拟需求，规划报告的目录结构
+        Use LLM to analyze simulation requirements and plan the report's table of contents structure
         
         Args:
-            progress_callback: 进度回调函数
+            progress_callback: Progress callback function
             
         Returns:
-            ReportOutline: 报告大纲
+            ReportOutline: Report outline
         """
-        logger.info("开始规划报告大纲...")
+        logger.info("Starting to plan report outline...")
         
         if progress_callback:
-            progress_callback("planning", 0, "正在分析模拟需求...")
+            progress_callback("planning", 0, "Analyzing simulation requirements...")
         
-        # 首先获取模拟上下文
+        # First, retrieve the simulation context
         context = self.zep_tools.get_simulation_context(
             graph_id=self.graph_id,
             simulation_requirement=self.simulation_requirement
         )
         
         if progress_callback:
-            progress_callback("planning", 30, "正在生成报告大纲...")
+            progress_callback("planning", 30, "Generating report outline...")
         
         system_prompt = PLAN_SYSTEM_PROMPT
         user_prompt = PLAN_USER_PROMPT_TEMPLATE.format(
@@ -1183,9 +1183,9 @@ class ReportAgent:
             )
             
             if progress_callback:
-                progress_callback("planning", 80, "正在解析大纲结构...")
+                progress_callback("planning", 80, "Parsing outline structure...")
             
-            # 解析大纲
+            # Parse the outline
             sections = []
             for section_data in response.get("sections", []):
                 sections.append(ReportSection(
@@ -1194,27 +1194,27 @@ class ReportAgent:
                 ))
             
             outline = ReportOutline(
-                title=response.get("title", "模拟分析报告"),
+                title=response.get("title", "Simulation Analysis Report"),
                 summary=response.get("summary", ""),
                 sections=sections
             )
             
             if progress_callback:
-                progress_callback("planning", 100, "大纲规划完成")
+                progress_callback("planning", 100, "Outline planning complete")
             
-            logger.info(f"大纲规划完成: {len(sections)} 个章节")
+            logger.info(f"Outline planning complete: {len(sections)} sections")
             return outline
             
         except Exception as e:
-            logger.error(f"大纲规划失败: {str(e)}")
-            # 返回默认大纲（3个章节，作为fallback）
+            logger.error(f"Outline planning failed: {str(e)}")
+            # Return default outline (3 sections, as fallback)
             return ReportOutline(
-                title="未来预测报告",
-                summary="基于模拟预测的未来趋势与风险分析",
+                title="Future Prediction Report",
+                summary="Future trends and risk analysis based on simulation predictions",
                 sections=[
-                    ReportSection(title="预测场景与核心发现"),
-                    ReportSection(title="人群行为预测分析"),
-                    ReportSection(title="趋势展望与风险提示")
+                    ReportSection(title="Predicted Scenarios and Key Findings"),
+                    ReportSection(title="Population Behavior Prediction Analysis"),
+                    ReportSection(title="Trend Outlook and Risk Warnings")
                 ]
             )
     
@@ -1227,28 +1227,28 @@ class ReportAgent:
         section_index: int = 0
     ) -> str:
         """
-        使用ReACT模式生成单个章节内容
+        Generate a single section's content using the ReACT pattern
         
-        ReACT循环：
-        1. Thought（思考）- 分析需要什么信息
-        2. Action（行动）- 调用工具获取信息
-        3. Observation（观察）- 分析工具返回结果
-        4. 重复直到信息足够或达到最大次数
-        5. Final Answer（最终回答）- 生成章节内容
+        ReACT loop:
+        1. Thought - analyze what information is needed
+        2. Action - call tools to retrieve information
+        3. Observation - analyze tool return results
+        4. Repeat until information is sufficient or maximum iterations reached
+        5. Final Answer - generate section content
         
         Args:
-            section: 要生成的章节
-            outline: 完整大纲
-            previous_sections: 之前章节的内容（用于保持连贯性）
-            progress_callback: 进度回调
-            section_index: 章节索引（用于日志记录）
+            section: The section to generate
+            outline: Complete outline
+            previous_sections: Content of previous sections (for maintaining coherence)
+            progress_callback: Progress callback
+            section_index: Section index (for logging)
             
         Returns:
-            章节内容（Markdown格式）
+            Section content (Markdown format)
         """
-        logger.info(f"ReACT生成章节: {section.title}")
+        logger.info(f"ReACT generating section: {section.title}")
         
-        # 记录章节开始日志
+        # Log section start
         if self.report_logger:
             self.report_logger.log_section_start(section.title, section_index)
         
@@ -1260,16 +1260,16 @@ class ReportAgent:
             tools_description=self._get_tools_description(),
         )
 
-        # 构建用户prompt - 每个已完成章节各传入最大4000字
+        # Build user prompt - pass up to 4000 characters per completed section
         if previous_sections:
             previous_parts = []
             for sec in previous_sections:
-                # 每个章节最多4000字
+                # Each section truncated to 4000 characters
                 truncated = sec[:4000] + "..." if len(sec) > 4000 else sec
                 previous_parts.append(truncated)
             previous_content = "\n\n---\n\n".join(previous_parts)
         else:
-            previous_content = "（这是第一个章节）"
+            previous_content = "(This is the first section)"
         
         user_prompt = SECTION_USER_PROMPT_TEMPLATE.format(
             previous_content=previous_content,
@@ -1281,77 +1281,77 @@ class ReportAgent:
             {"role": "user", "content": user_prompt}
         ]
         
-        # ReACT循环
+        # ReACT loop
         tool_calls_count = 0
-        max_iterations = 5  # 最大迭代轮数
-        min_tool_calls = 3  # 最少工具调用次数
-        conflict_retries = 0  # 工具调用与Final Answer同时出现的连续冲突次数
-        used_tools = set()  # 记录已调用过的工具名
+        max_iterations = 5  # Maximum iteration rounds
+        min_tool_calls = 3  # Minimum tool call count
+        conflict_retries = 0  # Consecutive conflict count when tool calls and Final Answer appear simultaneously
+        used_tools = set()  # Track names of tools already called
         all_tools = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
 
-        # 报告上下文，用于InsightForge的子问题生成
-        report_context = f"章节标题: {section.title}\n模拟需求: {self.simulation_requirement}"
+        # Report context for InsightForge sub-question generation
+        report_context = f"Section title: {section.title}\nSimulation requirement: {self.simulation_requirement}"
         
         for iteration in range(max_iterations):
             if progress_callback:
                 progress_callback(
                     "generating", 
                     int((iteration / max_iterations) * 100),
-                    f"深度检索与撰写中 ({tool_calls_count}/{self.MAX_TOOL_CALLS_PER_SECTION})"
+                    f"Deep retrieval and writing in progress ({tool_calls_count}/{self.MAX_TOOL_CALLS_PER_SECTION})"
                 )
             
-            # 调用LLM
+            # Call LLM
             response = self.llm.chat(
                 messages=messages,
                 temperature=0.5,
                 max_tokens=4096
             )
 
-            # 检查 LLM 返回是否为 None（API 异常或内容为空）
+            # Check if LLM returned None (API error or empty content)
             if response is None:
-                logger.warning(f"章节 {section.title} 第 {iteration + 1} 次迭代: LLM 返回 None")
-                # 如果还有迭代次数，添加消息并重试
+                logger.warning(f"Section {section.title} iteration {iteration + 1}: LLM returned None")
+                # If iterations remain, append message and retry
                 if iteration < max_iterations - 1:
-                    messages.append({"role": "assistant", "content": "（响应为空）"})
-                    messages.append({"role": "user", "content": "请继续生成内容。"})
+                    messages.append({"role": "assistant", "content": "(Empty response)"})
+                    messages.append({"role": "user", "content": "Please continue generating content."})
                     continue
-                # 最后一次迭代也返回 None，跳出循环进入强制收尾
+                # Last iteration also returned None, exit loop and proceed to forced conclusion
                 break
 
-            logger.debug(f"LLM响应: {response[:200]}...")
+            logger.debug(f"LLM response: {response[:200]}...")
 
-            # 解析一次，复用结果
+            # Parse once, reuse results
             tool_calls = self._parse_tool_calls(response)
             has_tool_calls = bool(tool_calls)
             has_final_answer = "Final Answer:" in response
 
-            # ── 冲突处理：LLM 同时输出了工具调用和 Final Answer ──
+            # ── Conflict handling: LLM output both tool calls and Final Answer simultaneously ──
             if has_tool_calls and has_final_answer:
                 conflict_retries += 1
                 logger.warning(
-                    f"章节 {section.title} 第 {iteration+1} 轮: "
-                    f"LLM 同时输出工具调用和 Final Answer（第 {conflict_retries} 次冲突）"
+                    f"Section {section.title} iteration {iteration+1}: "
+                    f"LLM output both tool calls and Final Answer simultaneously (conflict #{conflict_retries})"
                 )
 
                 if conflict_retries <= 2:
-                    # 前两次：丢弃本次响应，要求 LLM 重新回复
+                    # First two times: discard this response, ask LLM to reply again
                     messages.append({"role": "assistant", "content": response})
                     messages.append({
                         "role": "user",
                         "content": (
-                            "【格式错误】你在一次回复中同时包含了工具调用和 Final Answer，这是不允许的。\n"
-                            "每次回复只能做以下两件事之一：\n"
-                            "- 调用一个工具（输出一个 <tool_call> 块，不要写 Final Answer）\n"
-                            "- 输出最终内容（以 'Final Answer:' 开头，不要包含 <tool_call>）\n"
-                            "请重新回复，只做其中一件事。"
+                            "[Format error] Your reply contained both a tool call and a Final Answer, which is not allowed.\n"
+                            "Each reply must do exactly one of the following:\n"
+                            "- Call a tool (output one <tool_call> block, do not write Final Answer)\n"
+                            "- Output the final content (start with 'Final Answer:', do not include <tool_call>)\n"
+                            "Please reply again doing only one of these."
                         ),
                     })
                     continue
                 else:
-                    # 第三次：降级处理，截断到第一个工具调用，强制执行
+                    # Third time: degrade, truncate to first tool call and force execute
                     logger.warning(
-                        f"章节 {section.title}: 连续 {conflict_retries} 次冲突，"
-                        "降级为截断执行第一个工具调用"
+                        f"Section {section.title}: {conflict_retries} consecutive conflicts, "
+                        "degrading to truncate and execute first tool call"
                     )
                     first_tool_end = response.find('</tool_call>')
                     if first_tool_end != -1:
@@ -1361,7 +1361,7 @@ class ReportAgent:
                     has_final_answer = False
                     conflict_retries = 0
 
-            # 记录 LLM 响应日志
+            # Log LLM response
             if self.report_logger:
                 self.report_logger.log_llm_response(
                     section_title=section.title,
@@ -1372,13 +1372,13 @@ class ReportAgent:
                     has_final_answer=has_final_answer
                 )
 
-            # ── 情况1：LLM 输出了 Final Answer ──
+            # ── Case 1: LLM output a Final Answer ──
             if has_final_answer:
-                # 工具调用次数不足，拒绝并要求继续调工具
+                # Insufficient tool calls, reject and require more tool usage
                 if tool_calls_count < min_tool_calls:
                     messages.append({"role": "assistant", "content": response})
                     unused_tools = all_tools - used_tools
-                    unused_hint = f"（这些工具还未使用，推荐用一下他们: {', '.join(unused_tools)}）" if unused_tools else ""
+                    unused_hint = f"(These tools have not been used yet, recommended: {', '.join(unused_tools)})" if unused_tools else ""
                     messages.append({
                         "role": "user",
                         "content": REACT_INSUFFICIENT_TOOLS_MSG.format(
@@ -1391,7 +1391,7 @@ class ReportAgent:
 
                 # 正常结束
                 final_answer = response.split("Final Answer:")[-1].strip()
-                logger.info(f"章节 {section.title} 生成完成（工具调用: {tool_calls_count}次）")
+                logger.info(f"Section {section.title} generation complete (tool calls: {tool_calls_count})")
 
                 if self.report_logger:
                     self.report_logger.log_section_content(
@@ -1402,9 +1402,9 @@ class ReportAgent:
                     )
                 return final_answer
 
-            # ── 情况2：LLM 尝试调用工具 ──
+            # ── Case 2: LLM attempted to call a tool ──
             if has_tool_calls:
-                # 工具额度已耗尽 → 明确告知，要求输出 Final Answer
+                # Tool quota exhausted → notify explicitly, require Final Answer output
                 if tool_calls_count >= self.MAX_TOOL_CALLS_PER_SECTION:
                     messages.append({"role": "assistant", "content": response})
                     messages.append({
@@ -1416,10 +1416,10 @@ class ReportAgent:
                     })
                     continue
 
-                # 只执行第一个工具调用
+                # Execute only the first tool call
                 call = tool_calls[0]
                 if len(tool_calls) > 1:
-                    logger.info(f"LLM 尝试调用 {len(tool_calls)} 个工具，只执行第一个: {call['name']}")
+                    logger.info(f"LLM attempted to call {len(tool_calls)} tools, executing only the first: {call['name']}")
 
                 if self.report_logger:
                     self.report_logger.log_tool_call(
@@ -1448,7 +1448,7 @@ class ReportAgent:
                 tool_calls_count += 1
                 used_tools.add(call['name'])
 
-                # 构建未使用工具提示
+                # Build unused tools hint
                 unused_tools = all_tools - used_tools
                 unused_hint = ""
                 if unused_tools and tool_calls_count < self.MAX_TOOL_CALLS_PER_SECTION:
@@ -1468,13 +1468,13 @@ class ReportAgent:
                 })
                 continue
 
-            # ── 情况3：既没有工具调用，也没有 Final Answer ──
+            # ── Case 3: Neither tool calls nor Final Answer ──
             messages.append({"role": "assistant", "content": response})
 
             if tool_calls_count < min_tool_calls:
-                # 工具调用次数不足，推荐未用过的工具
+                # Insufficient tool calls, recommend unused tools
                 unused_tools = all_tools - used_tools
-                unused_hint = f"（这些工具还未使用，推荐用一下他们: {', '.join(unused_tools)}）" if unused_tools else ""
+                unused_hint = f"(These tools have not been used yet, recommended: {', '.join(unused_tools)})" if unused_tools else ""
 
                 messages.append({
                     "role": "user",
@@ -1486,9 +1486,9 @@ class ReportAgent:
                 })
                 continue
 
-            # 工具调用已足够，LLM 输出了内容但没带 "Final Answer:" 前缀
-            # 直接将这段内容作为最终答案，不再空转
-            logger.info(f"章节 {section.title} 未检测到 'Final Answer:' 前缀，直接采纳LLM输出作为最终内容（工具调用: {tool_calls_count}次）")
+            # Tool calls are sufficient, LLM output content without a "Final Answer:" prefix
+            # Directly adopt this content as the final answer, no further idle iterations
+            logger.info(f"Section {section.title}: no 'Final Answer:' prefix detected, adopting LLM output directly as final content (tool calls: {tool_calls_count})")
             final_answer = response.strip()
 
             if self.report_logger:
@@ -1500,8 +1500,8 @@ class ReportAgent:
                 )
             return final_answer
         
-        # 达到最大迭代次数，强制生成内容
-        logger.warning(f"章节 {section.title} 达到最大迭代次数，强制生成")
+        # Reached maximum iterations, force generate content
+        logger.warning(f"Section {section.title} reached maximum iterations, forcing generation")
         messages.append({"role": "user", "content": REACT_FORCE_FINAL_MSG})
         
         response = self.llm.chat(
@@ -1510,16 +1510,16 @@ class ReportAgent:
             max_tokens=4096
         )
 
-        # 检查强制收尾时 LLM 返回是否为 None
+        # Check if LLM returned None during forced conclusion
         if response is None:
-            logger.error(f"章节 {section.title} 强制收尾时 LLM 返回 None，使用默认错误提示")
-            final_answer = f"（本章节生成失败：LLM 返回空响应，请稍后重试）"
+            logger.error(f"Section {section.title}: LLM returned None during forced conclusion, using default error message")
+            final_answer = f"(This section failed to generate: LLM returned an empty response, please try again later)"
         elif "Final Answer:" in response:
             final_answer = response.split("Final Answer:")[-1].strip()
         else:
             final_answer = response
         
-        # 记录章节内容生成完成日志
+        # Log section content generation completion
         if self.report_logger:
             self.report_logger.log_section_content(
                 section_title=section.title,
