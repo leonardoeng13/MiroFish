@@ -222,7 +222,10 @@ class OasisProfileGenerator:
         
         if self.zep_api_key:
             try:
-                self.zep_client = Zep(api_key=self.zep_api_key)
+                zep_kwargs = {"api_key": self.zep_api_key}
+                if Config.ZEP_BASE_URL:
+                    zep_kwargs["base_url"] = Config.ZEP_BASE_URL
+                self.zep_client = Zep(**zep_kwargs)
             except Exception as e:
                 logger.warning(f"Failed to initialize Zep client: {e}")
     
@@ -688,9 +691,7 @@ class OasisProfileGenerator:
     
     def _get_system_prompt(self, is_individual: bool) -> str:
         """Get system prompt"""
-        # "Use Chinese" instructs the LLM to generate persona content in Chinese,
-        # as the simulation targets Chinese social media contexts.
-        base_prompt = "You are an expert in generating social media user profiles. Generate detailed, realistic personas for public opinion simulation, restoring existing reality to the greatest extent possible. You must return valid JSON format; all string values must not contain unescaped newline characters. Use Chinese."
+        base_prompt = "You are an expert in generating social media user profiles. Generate detailed, realistic personas for public opinion simulation, restoring existing reality to the greatest extent possible. You must return valid JSON format; all string values must not contain unescaped newline characters. Use English."
         return base_prompt
     
     def _build_individual_persona_prompt(
@@ -737,7 +738,7 @@ Generate JSON with the following fields:
 Important:
 - All field values must be strings or numbers; do not use newline characters
 - persona must be a coherent block of text
-- Use Chinese (except the gender field which must use English male/female)
+- Use English (except the gender field which must use English male/female)
 - Content must be consistent with the entity information
 - age must be a valid integer, gender must be "male" or "female"
 """
@@ -786,7 +787,7 @@ Generate JSON with the following fields:
 Important:
 - All field values must be strings or numbers; null values are not allowed
 - persona must be a coherent block of text; do not use newline characters
-- Use Chinese (except the gender field which must use English "other")
+- Use English (except the gender field which must use English "other")
 - age must be the integer 30, gender must be the string "other"
 - Institutional account speech must match its identity and positioning"""
     

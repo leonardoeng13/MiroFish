@@ -12,3 +12,42 @@ services:
     restart: unless-stopped
     volumes:
       - ./backend/uploads:/app/backend/uploads
+    depends_on:
+      - zep
+
+  # ── Local Zep CE (self-hosted knowledge graph) ─────────────────────────────
+  # Remove the depends_on above and these two services if you prefer Zep Cloud.
+  # When using Zep CE locally, set the following in your .env:
+  #   ZEP_API_KEY=local          (any non-empty string; auth is disabled by default)
+  #   ZEP_BASE_URL=http://zep:8000
+  zep:
+    image: ghcr.io/getzep/zep-ce:latest
+    container_name: zep
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      ZEP_STORE_POSTGRES_DSN: "postgresql://zep:zep@zep-db:5432/zep"
+      ZEP_AUTH_REQUIRED: "false"
+    depends_on:
+      zep-db:
+        condition: service_healthy
+
+  zep-db:
+    image: postgres:16
+    container_name: zep-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zep
+      POSTGRES_PASSWORD: zep
+      POSTGRES_DB: zep
+    volumes:
+      - zep_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zep -d zep"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  zep_pg_data:
