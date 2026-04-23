@@ -12,44 +12,99 @@ services:
     restart: unless-stopped
     volumes:
       - ./backend/uploads:/app/backend/uploads
-    depends_on:
-      - zep
 
   # ── Local Zep CE (self-hosted knowledge graph) ─────────────────────────────
-  # Remove the depends_on above and these two services if you prefer Zep Cloud.
-  # When using Zep CE locally, set the following in your .env:
-  #   ZEP_API_KEY=local          (any non-empty string; auth is disabled by default)
-  #   ZEP_BASE_URL=http://zep:8000   (use this when MiroFish also runs in Docker Compose)
-  #   ZEP_BASE_URL=http://localhost:8000  (use this when running MiroFish outside Docker)
-  # Port 8000 is exposed on the host so you can also browse the Zep UI directly.
+  # These services are OPTIONAL and only start when you use the "local-zep" profile:
+  #   docker compose --profile local-zep up -d
+  #
+  # Prerequisites:
+  #   1. Copy zep.yaml.example to zep.yaml and adjust if needed.
+  #   2. Add OPENAI_API_KEY to your .env file (required by the Graphiti service).
+  #   3. Set in your .env:
+  #        ZEP_API_KEY=local        (any non-empty string)
+  #        ZEP_BASE_URL=http://localhost:8000   (when mirofish runs outside Docker)
+  #        ZEP_BASE_URL=http://zep:8000         (when mirofish also runs in Docker Compose)
+  #
+  # Port 8000 (Zep) is exposed on the host for direct browser / API access.
+  # ─────────────────────────────────────────────────────────────────────────────
+
   zep:
-    image: ghcr.io/getzep/zep-ce:latest
+    profiles: [local-zep]
+    image: zepai/zep:latest
     container_name: zep
     restart: unless-stopped
     ports:
       - "8000:8000"
+    volumes:
+      - ./zep.yaml:/app/zep.yaml
     environment:
-      ZEP_STORE_POSTGRES_DSN: "postgresql://zep:zep@zep-db:5432/zep"
-      ZEP_AUTH_REQUIRED: "false"
+      - ZEP_CONFIG_FILE=zep.yaml
     depends_on:
+      graphiti:
+        condition: service_healthy
       zep-db:
         condition: service_healthy
 
+  graphiti:
+    profiles: [local-zep]
+    image: zepai/graphiti:0.3
+    container_name: zep-graphiti
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MODEL_NAME=gpt-4o-mini
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=zepzepzep
+      - PORT=8003
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthcheck')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      neo4j:
+        condition: service_healthy
+
+  neo4j:
+    profiles: [local-zep]
+    image: neo4j:5.22.0
+    container_name: zep-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - zep_neo4j_data:/data
+    environment:
+      - NEO4J_AUTH=neo4j/zepzepzep
+    healthcheck:
+      test: wget http://localhost:7687 || exit 1
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
   zep-db:
-    image: postgres:16
+    profiles: [local-zep]
+    image: ankane/pgvector:v0.5.1
     container_name: zep-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: zep
-      POSTGRES_PASSWORD: zep
-      POSTGRES_DB: zep
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     volumes:
       - zep_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U zep -d zep"]
-      interval: 10s
+      test: ["CMD", "pg_isready", "-q", "-d", "postgres", "-U", "postgres"]
+      interval: 5s
       timeout: 5s
       retries: 5
 
 volumes:
   zep_pg_data:
+  zep_neo4j_data:

@@ -691,7 +691,7 @@ class OasisProfileGenerator:
     
     def _get_system_prompt(self, is_individual: bool) -> str:
         """Get system prompt"""
-        base_prompt = "You are an expert in generating social media user profiles. Generate detailed, realistic personas for public opinion simulation, restoring existing reality to the greatest extent possible. You must return valid JSON format; all string values must not contain unescaped newline characters. Use English."
+        base_prompt = "You are an expert in generating social media user profiles. Generate detailed, realistic personas for public opinion simulation, restoring existing reality to the greatest extent possible. You must return valid JSON format; all string values must not contain unescaped newline characters. Use English or Brazilian Portuguese depending on the simulation context."
         return base_prompt
     
     def _build_individual_persona_prompt(
@@ -731,14 +731,14 @@ Generate JSON with the following fields:
 3. age: Age number (must be an integer)
 4. gender: Gender, must be in English: "male" or "female"
 5. mbti: MBTI type (e.g., INTJ, ENFP)
-6. country: Country (e.g., "China")
+6. country: Country (e.g., "Brazil", "United States")
 7. profession: Occupation
 8. interested_topics: Array of topics of interest
 
 Important:
 - All field values must be strings or numbers; do not use newline characters
 - persona must be a coherent block of text
-- Use English (except the gender field which must use English male/female)
+- Use English or Brazilian Portuguese depending on the simulation context (except the gender field which must use English male/female)
 - Content must be consistent with the entity information
 - age must be a valid integer, gender must be "male" or "female"
 """
@@ -780,14 +780,14 @@ Generate JSON with the following fields:
 3. age: Fixed at 30 (virtual age for institutional accounts)
 4. gender: Fixed at "other" (institutional accounts use "other" to indicate non-individual)
 5. mbti: MBTI type to describe the account style; e.g., ISTJ represents rigorous and conservative
-6. country: Country (e.g., "China")
+6. country: Country (e.g., "Brazil", "United States")
 7. profession: Description of institutional functions
 8. interested_topics: Array of areas of focus
 
 Important:
 - All field values must be strings or numbers; null values are not allowed
 - persona must be a coherent block of text; do not use newline characters
-- Use English (except the gender field which must use English "other")
+- Use English or Brazilian Portuguese depending on the simulation context (except the gender field which must use English "other")
 - age must be the integer 30, gender must be the string "other"
 - Institutional account speech must match its identity and positioning"""
     

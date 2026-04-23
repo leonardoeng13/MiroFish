@@ -10,6 +10,9 @@ Thumbs.db
 .env.test
 .env.production
 
+# Zep CE local config (may contain credentials)
+zep.yaml
+
 # Python
 __pycache__/
 *.py[cod]
