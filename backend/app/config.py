@@ -108,9 +108,9 @@ class Config:
         if not cls.ZEP_API_KEY:
             if cls.ZEP_BASE_URL:
                 errors.append(
-                    "ZEP_API_KEY is not configured. "
-                    "When using a local Zep instance (ZEP_BASE_URL is set), "
-                    "you may set ZEP_API_KEY to any non-empty string if authentication is disabled."
+                    "ZEP_API_KEY is required. "
+                    "When using a local Zep instance with authentication disabled, "
+                    "set ZEP_API_KEY to any non-empty string (e.g. 'local')."
                 )
             else:
                 errors.append("ZEP_API_KEY is not configured")

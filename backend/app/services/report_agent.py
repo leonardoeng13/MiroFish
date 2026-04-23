@@ -697,8 +697,8 @@ Your task is to:
 
 3. [Language Consistency - All report content must be in English or Brazilian Portuguese]
    - Content returned by tools may contain text in various languages
-   - The report must be written entirely in English or Brazilian Portuguese (match the language of the simulation requirements when possible; default to English)
-   - When quoting content returned by tools in other languages, translate it into fluent English or Brazilian Portuguese before writing it into the report
+   - Write the report in English by default; use Brazilian Portuguese if the simulation requirements are written in Portuguese
+   - When quoting content returned by tools in other languages, translate it into fluent English (or Brazilian Portuguese when applicable) before writing it into the report
    - Preserve the original meaning when translating, ensuring natural and coherent expression
    - This rule applies to both the main text and block quotes (> format)
 

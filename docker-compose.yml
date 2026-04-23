@@ -19,7 +19,9 @@ services:
   # Remove the depends_on above and these two services if you prefer Zep Cloud.
   # When using Zep CE locally, set the following in your .env:
   #   ZEP_API_KEY=local          (any non-empty string; auth is disabled by default)
-  #   ZEP_BASE_URL=http://zep:8000
+  #   ZEP_BASE_URL=http://zep:8000   (use this when MiroFish also runs in Docker Compose)
+  #   ZEP_BASE_URL=http://localhost:8000  (use this when running MiroFish outside Docker)
+  # Port 8000 is exposed on the host so you can also browse the Zep UI directly.
   zep:
     image: ghcr.io/getzep/zep-ce:latest
     container_name: zep
