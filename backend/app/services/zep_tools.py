@@ -447,7 +447,10 @@ class ZepToolsService:
         if not self.api_key:
             raise ValueError("ZEP_API_KEY is not configured")
         
-        self.client = Zep(api_key=self.api_key)
+        zep_kwargs = {"api_key": self.api_key}
+        if Config.ZEP_BASE_URL:
+            zep_kwargs["base_url"] = Config.ZEP_BASE_URL
+        self.client = Zep(**zep_kwargs)
         # LLM client for InsightForge sub-question generation
         self._llm_client = llm_client
         logger.info("ZepToolsService initialization complete")

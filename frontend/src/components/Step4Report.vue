@@ -1335,13 +1335,14 @@ const InterviewDisplay = {
       if (!answerText || questionCount <= 0) return [answerText]
       if (isPlaceholderText(answerText)) return ['']
 
-      // 支持两种编号格式：
-      // 1. "问题X：" 或 "问题X:" （中文格式，后端新格式）
-      // 2. "1. " 或 "\n1. " （数字+点，旧格式兼容）
+      // 支持三种编号格式：
+      // 1. "问题X：" 或 "问题X:" （中文格式，兼容旧输出）
+      // 2. "Question X:" or "Question X：" (English format)
+      // 3. "1. " 或 "\n1. " （数字+点，旧格式兼容）
       let matches = []
       let match
 
-      // 优先尝试 "问题X：" 格式
+      // 优先尝试 "问题X：" 格式 (legacy Chinese format)
       const cnPattern = /(?:^|[\r\n]+)问题(\d+)[：:]\s*/g
       while ((match = cnPattern.exec(answerText)) !== null) {
         matches.push({
@@ -1349,6 +1350,18 @@ const InterviewDisplay = {
           index: match.index,
           fullMatch: match[0]
         })
+      }
+
+      // 如果没匹配到，尝试英文 "Question X:" 格式
+      if (matches.length === 0) {
+        const enPattern = /(?:^|[\r\n]+)Question\s+(\d+)[：:]\s*/gi
+        while ((match = enPattern.exec(answerText)) !== null) {
+          matches.push({
+            num: parseInt(match[1]),
+            index: match.index,
+            fullMatch: match[0]
+          })
+        }
       }
 
       // 如果没匹配到，回退到 "数字." 格式

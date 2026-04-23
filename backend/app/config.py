@@ -58,6 +58,11 @@ class Config:
     
     # Zep configuration
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+    # Optional: URL for a self-hosted Zep CE instance (e.g. http://localhost:8000).
+    # When set, the Zep client connects to this local server instead of Zep Cloud.
+    # The ZEP_API_KEY is still required by the SDK but can be any non-empty string
+    # when the local server has authentication disabled.
+    ZEP_BASE_URL = os.environ.get('ZEP_BASE_URL')
     
     # File upload configuration
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -101,5 +106,12 @@ class Config:
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY is not configured")
         if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY is not configured")
+            if cls.ZEP_BASE_URL:
+                errors.append(
+                    "ZEP_API_KEY is required. "
+                    "When using a local Zep instance with authentication disabled, "
+                    "set ZEP_API_KEY to any non-empty string (e.g. 'local')."
+                )
+            else:
+                errors.append("ZEP_API_KEY is not configured")
         return errors
