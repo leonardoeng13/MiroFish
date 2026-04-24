@@ -46,6 +46,7 @@ from ..config import Config
 from ..services.ontology_generator import OntologyGenerator
 from ..services.graph_builder import GraphBuilderService
 from ..services.text_processor import TextProcessor
+from ..services.location_aggregator import LocationAggregatorService
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
 from ..utils.response import error_response
@@ -642,3 +643,127 @@ def delete_graph(graph_id: str):
         
     except Exception as e:
         return jsonify(error_response(str(e), 500, e)), 500
+
+
+# ============== Location filter endpoints ==============
+
+@graph_bp.route('/<graph_id>/location-stats', methods=['GET'])
+def get_location_stats(graph_id: str):
+    """
+    Return geographic aggregation statistics for all entities in the graph.
+
+    Groups entities by country → state → city → neighborhood and counts
+    how many entities are found at each level.
+
+    Query parameters
+    ----------------
+    entity_type : str, optional
+        Filter to a specific entity type (e.g. ``Person``, ``University``).
+    country : str, optional
+        Restrict output to a single country (case-insensitive).
+    include_unknown : bool, optional
+        When ``true``, include entities whose location could not be resolved
+        in an "Unknown" bucket.  Default ``false``.
+
+    Returns
+    -------
+    JSON with keys ``graph_id``, ``total_entities_analysed``,
+    ``total_with_location``, ``filters_applied``, ``hierarchy``.
+    """
+    try:
+        if not Config.ZEP_API_KEY:
+            return jsonify({
+                "success": False,
+                "error": "ZEP_API_KEY is not configured"
+            }), 500
+
+        entity_type = request.args.get('entity_type') or None
+        country = request.args.get('country') or None
+        include_unknown = request.args.get('include_unknown', 'false').lower() == 'true'
+
+        svc = LocationAggregatorService(api_key=Config.ZEP_API_KEY)
+        stats = svc.get_location_stats(
+            graph_id=graph_id,
+            entity_type_filter=entity_type,
+            country_filter=country,
+            include_unknown=include_unknown,
+        )
+
+        return jsonify({"success": True, "data": stats})
+
+    except Exception as e:
+        logger.error(f"Failed to get location stats for graph {graph_id}: {str(e)}")
+        return jsonify({"success": False, "error": "Failed to retrieve location statistics"}), 500
+
+
+@graph_bp.route('/<graph_id>/location-entities', methods=['GET'])
+def get_entities_by_location(graph_id: str):
+    """
+    Return a flat list of entities matching the requested location.
+
+    Query parameters
+    ----------------
+    country : str, optional
+    state : str, optional
+    city : str, optional
+    neighborhood : str, optional
+    entity_type : str, optional
+
+    At least one location field must be provided.
+
+    Returns
+    -------
+    JSON with ``count`` and ``entities`` list.
+    """
+    try:
+        if not Config.ZEP_API_KEY:
+            return jsonify({
+                "success": False,
+                "error": "ZEP_API_KEY is not configured"
+            }), 500
+
+        country = request.args.get('country') or None
+        state = request.args.get('state') or None
+        city = request.args.get('city') or None
+        neighborhood = request.args.get('neighborhood') or None
+        entity_type = request.args.get('entity_type') or None
+
+        if not any([country, state, city, neighborhood]):
+            return jsonify({
+                "success": False,
+                "error": "At least one location filter (country, state, city, neighborhood) must be provided"
+            }), 400
+
+        svc = LocationAggregatorService(api_key=Config.ZEP_API_KEY)
+        entities = svc.get_entities_by_location(
+            graph_id=graph_id,
+            country=country,
+            state=state,
+            city=city,
+            neighborhood=neighborhood,
+            entity_type_filter=entity_type,
+        )
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "count": len(entities),
+                "entities": entities,
+                "filters": {
+                    "country": country,
+                    "state": state,
+                    "city": city,
+                    "neighborhood": neighborhood,
+                    "entity_type": entity_type,
+                }
+            }
+        })
+
+    except ValueError as e:
+        # ValueError is raised by the service for invalid filter combinations.
+        # Return a safe, fixed message rather than forwarding the internal exception string.
+        logger.warning(f"Invalid location filter for graph {graph_id}: {str(e)}")
+        return jsonify({"success": False, "error": "Invalid location filter: at least one of country, state, city, or neighborhood must be provided"}), 400
+    except Exception as e:
+        logger.error(f"Failed to get entities by location for graph {graph_id}: {str(e)}")
+        return jsonify({"success": False, "error": "Failed to retrieve entities by location"}), 500

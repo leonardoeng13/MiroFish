@@ -407,7 +407,13 @@ def prepare_simulation():
             "entity_types": ["Student", "PublicFigure"],  // optional, specify entity types
             "use_llm_for_profiles": true,                 // optional, whether to use LLM to generate profiles
             "parallel_profile_count": 5,                  // optional, parallel profile generation count, default 5
-            "force_regenerate": false                     // optional, force regeneration, default false
+            "force_regenerate": false,                    // optional, force regeneration, default false
+            "location_filter": {                          // optional, restrict agents to a geographic region
+                "country": "Brazil",
+                "state": "São Paulo",
+                "city": "São Paulo",
+                "neighborhood": "Pinheiros"
+            }
         }
     
     Returns:
@@ -492,6 +498,7 @@ def prepare_simulation():
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
         parallel_profile_count = data.get('parallel_profile_count', 5)
+        location_filter = data.get('location_filter') or None  # e.g. {"country": "Brazil", "city": "São Paulo"}
         
         # ========== Synchronously get entity count (before starting background task) ==========
         # This allows the frontend to get the expected total Agent count immediately after calling prepare
@@ -608,7 +615,8 @@ def prepare_simulation():
                     defined_entity_types=entity_types_list,
                     use_llm_for_profiles=use_llm_for_profiles,
                     progress_callback=progress_callback,
-                    parallel_profile_count=parallel_profile_count
+                    parallel_profile_count=parallel_profile_count,
+                    location_filter=location_filter,
                 )
                 
                 # Task complete

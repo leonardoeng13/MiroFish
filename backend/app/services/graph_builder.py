@@ -27,6 +27,7 @@ import os
 import uuid
 import time
 import threading
+import concurrent.futures
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 
@@ -37,6 +38,10 @@ from ..config import Config
 from ..models.task import TaskManager, TaskStatus
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 from .text_processor import TextProcessor
+
+# Delay (in seconds) inserted between consecutive full-sized batches to avoid
+# overwhelming the Zep API.  Skipped automatically for smaller final batches.
+_BATCH_DELAY_SECONDS = 0.5
 
 
 @dataclass
@@ -351,8 +356,10 @@ class GraphBuilderService:
                         if ep_uuid:
                             episode_uuids.append(ep_uuid)
                 
-                # Avoid sending requests too quickly
-                time.sleep(1)
+                # Small delay between batches only when the batch was full-sized,
+                # to avoid hammering the API under light loads.
+                if len(batch_chunks) >= batch_size:
+                    time.sleep(_BATCH_DELAY_SECONDS)
                 
             except Exception as e:
                 if progress_callback:
@@ -367,7 +374,12 @@ class GraphBuilderService:
         progress_callback: Optional[Callable] = None,
         timeout: int = 600
     ):
-        """Wait for all episodes to finish processing (by polling each episode's processed status)"""
+        """Wait for all episodes to finish processing.
+
+        Status polling is parallelised with a ``ThreadPoolExecutor`` so that
+        many episodes can be checked concurrently within each polling cycle
+        instead of being queried one-by-one.
+        """
         if not episode_uuids:
             if progress_callback:
                 progress_callback("Nothing to wait for (no episodes)", 1.0)
@@ -377,9 +389,19 @@ class GraphBuilderService:
         pending_episodes = set(episode_uuids)
         completed_count = 0
         total_episodes = len(episode_uuids)
+        # Use up to 10 workers for status checks; avoid overwhelming the API.
+        max_poll_workers = min(10, total_episodes)
         
         if progress_callback:
             progress_callback(f"Waiting for {total_episodes} chunks to be processed...", 0)
+        
+        def _check_episode(ep_uuid: str) -> bool:
+            """Return True if the episode is processed, False otherwise."""
+            try:
+                episode = self.client.graph.episode.get(uuid_=ep_uuid)
+                return bool(getattr(episode, 'processed', False))
+            except Exception:
+                return False
         
         while pending_episodes:
             if time.time() - start_time > timeout:
@@ -390,19 +412,18 @@ class GraphBuilderService:
                     )
                 break
             
-            # Check processing status of each episode
-            for ep_uuid in list(pending_episodes):
-                try:
-                    episode = self.client.graph.episode.get(uuid_=ep_uuid)
-                    is_processed = getattr(episode, 'processed', False)
-                    
-                    if is_processed:
-                        pending_episodes.remove(ep_uuid)
-                        completed_count += 1
-                        
-                except Exception as e:
-                    # Ignore individual query errors and continue
-                    pass
+            # Check all pending episodes in parallel
+            to_check = list(pending_episodes)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_poll_workers) as executor:
+                futures = {executor.submit(_check_episode, ep_uuid): ep_uuid for ep_uuid in to_check}
+                for future in concurrent.futures.as_completed(futures):
+                    ep_uuid = futures[future]
+                    try:
+                        if future.result():
+                            pending_episodes.discard(ep_uuid)
+                            completed_count += 1
+                    except Exception:
+                        pass
             
             elapsed = int(time.time() - start_time)
             if progress_callback:
@@ -412,7 +433,7 @@ class GraphBuilderService:
                 )
             
             if pending_episodes:
-                time.sleep(3)  # Check every 3 seconds
+                time.sleep(3)  # Wait before the next polling cycle
         
         if progress_callback:
             progress_callback(f"Processing complete: {completed_count}/{total_episodes}", 1.0)

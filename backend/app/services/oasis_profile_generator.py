@@ -66,6 +66,9 @@ class OasisAgentProfile:
     gender: Optional[str] = None
     mbti: Optional[str] = None
     country: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    neighborhood: Optional[str] = None
     profession: Optional[str] = None
     interested_topics: List[str] = field(default_factory=list)
     
@@ -96,6 +99,12 @@ class OasisAgentProfile:
             profile["mbti"] = self.mbti
         if self.country:
             profile["country"] = self.country
+        if self.city:
+            profile["city"] = self.city
+        if self.state:
+            profile["state"] = self.state
+        if self.neighborhood:
+            profile["neighborhood"] = self.neighborhood
         if self.profession:
             profile["profession"] = self.profession
         if self.interested_topics:
@@ -126,6 +135,12 @@ class OasisAgentProfile:
             profile["mbti"] = self.mbti
         if self.country:
             profile["country"] = self.country
+        if self.city:
+            profile["city"] = self.city
+        if self.state:
+            profile["state"] = self.state
+        if self.neighborhood:
+            profile["neighborhood"] = self.neighborhood
         if self.profession:
             profile["profession"] = self.profession
         if self.interested_topics:
@@ -149,6 +164,9 @@ class OasisAgentProfile:
             "gender": self.gender,
             "mbti": self.mbti,
             "country": self.country,
+            "city": self.city,
+            "state": self.state,
+            "neighborhood": self.neighborhood,
             "profession": self.profession,
             "interested_topics": self.interested_topics,
             "source_entity_uuid": self.source_entity_uuid,
@@ -287,6 +305,9 @@ class OasisProfileGenerator:
             gender=profile_data.get("gender"),
             mbti=profile_data.get("mbti"),
             country=profile_data.get("country"),
+            city=profile_data.get("city"),
+            state=profile_data.get("state"),
+            neighborhood=profile_data.get("neighborhood"),
             profession=profile_data.get("profession"),
             interested_topics=profile_data.get("interested_topics", []),
             source_entity_uuid=entity.uuid,
@@ -732,8 +753,11 @@ Generate JSON with the following fields:
 4. gender: Gender, must be in English: "male" or "female"
 5. mbti: MBTI type (e.g., INTJ, ENFP)
 6. country: Country (e.g., "Brazil", "United States")
-7. profession: Occupation
-8. interested_topics: Array of topics of interest
+7. city: City where this person is primarily located (e.g., "São Paulo", "New York") — omit if unknown
+8. state: State or province (e.g., "São Paulo", "California") — omit if unknown
+9. neighborhood: Neighborhood or district within the city (e.g., "Pinheiros", "Brooklyn") — omit if unknown
+10. profession: Occupation
+11. interested_topics: Array of topics of interest
 
 Important:
 - All field values must be strings or numbers; do not use newline characters
@@ -781,8 +805,11 @@ Generate JSON with the following fields:
 4. gender: Fixed at "other" (institutional accounts use "other" to indicate non-individual)
 5. mbti: MBTI type to describe the account style; e.g., ISTJ represents rigorous and conservative
 6. country: Country (e.g., "Brazil", "United States")
-7. profession: Description of institutional functions
-8. interested_topics: Array of areas of focus
+7. city: City where this institution is primarily located (e.g., "São Paulo") — omit if unknown
+8. state: State or province (e.g., "São Paulo") — omit if unknown
+9. neighborhood: Neighborhood or district (e.g., "Paulista") — omit if unknown
+10. profession: Description of institutional functions
+11. interested_topics: Array of areas of focus
 
 Important:
 - All field values must be strings or numbers; null values are not allowed
@@ -1036,6 +1063,18 @@ Important:
         # Build full output content (no truncation)
         topics_str = ', '.join(profile.interested_topics) if profile.interested_topics else 'None'
         
+        # Build location string from available fields
+        location_parts = []
+        if profile.neighborhood:
+            location_parts.append(profile.neighborhood)
+        if profile.city:
+            location_parts.append(profile.city)
+        if profile.state:
+            location_parts.append(profile.state)
+        if profile.country:
+            location_parts.append(profile.country)
+        location_str = ', '.join(location_parts) if location_parts else 'N/A'
+        
         output_lines = [
             f"\n{separator}",
             f"[Generated] {entity_name} ({entity_type})",
@@ -1050,7 +1089,7 @@ Important:
             f"",
             f"[Basic Attributes]",
             f"Age: {profile.age} | Gender: {profile.gender} | MBTI: {profile.mbti}",
-            f"Profession: {profile.profession} | Country: {profile.country}",
+            f"Profession: {profile.profession} | Location: {location_str}",
             f"Interested topics: {topics_str}",
             separator
         ]

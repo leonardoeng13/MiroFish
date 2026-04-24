@@ -264,6 +264,15 @@ class ZepEntityReader:
         
         # Build a mapping from node UUID to node data
         node_map = {n["uuid"]: n for n in all_nodes}
+
+        # Build adjacency indexes once — O(E) — so per-node lookups are O(degree)
+        # instead of the previous O(N×E) full scan inside the entity loop.
+        if enrich_with_edges:
+            source_index: Dict[str, list] = {}  # {source_uuid: [edge, ...]}
+            target_index: Dict[str, list] = {}  # {target_uuid: [edge, ...]}
+            for edge in all_edges:
+                source_index.setdefault(edge["source_node_uuid"], []).append(edge)
+                target_index.setdefault(edge["target_node_uuid"], []).append(edge)
         
         # Filter entities matching the criteria
         filtered_entities = []
@@ -304,23 +313,25 @@ class ZepEntityReader:
                 related_edges = []
                 related_node_uuids = set()
                 
-                for edge in all_edges:
-                    if edge["source_node_uuid"] == node["uuid"]:
-                        related_edges.append({
-                            "direction": "outgoing",
-                            "edge_name": edge["name"],
-                            "fact": edge["fact"],
-                            "target_node_uuid": edge["target_node_uuid"],
-                        })
-                        related_node_uuids.add(edge["target_node_uuid"])
-                    elif edge["target_node_uuid"] == node["uuid"]:
-                        related_edges.append({
-                            "direction": "incoming",
-                            "edge_name": edge["name"],
-                            "fact": edge["fact"],
-                            "source_node_uuid": edge["source_node_uuid"],
-                        })
-                        related_node_uuids.add(edge["source_node_uuid"])
+                # Outgoing edges — O(out-degree) via index
+                for edge in source_index.get(node["uuid"], []):
+                    related_edges.append({
+                        "direction": "outgoing",
+                        "edge_name": edge["name"],
+                        "fact": edge["fact"],
+                        "target_node_uuid": edge["target_node_uuid"],
+                    })
+                    related_node_uuids.add(edge["target_node_uuid"])
+
+                # Incoming edges — O(in-degree) via index
+                for edge in target_index.get(node["uuid"], []):
+                    related_edges.append({
+                        "direction": "incoming",
+                        "edge_name": edge["name"],
+                        "fact": edge["fact"],
+                        "source_node_uuid": edge["source_node_uuid"],
+                    })
+                    related_node_uuids.add(edge["source_node_uuid"])
                 
                 entity.related_edges = related_edges
                 

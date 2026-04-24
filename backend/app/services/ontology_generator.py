@@ -134,6 +134,9 @@ B. **Specific types (8, designed based on text content)**:
 - 1-3 key attributes per entity type
 - **Note**: Attribute names cannot use `name`, `uuid`, `group_id`, `created_at`, `summary` (these are system reserved words)
 - Recommended: `full_name`, `title`, `role`, `position`, `location`, `description`, etc.
+- **Location attributes (strongly recommended when the text contains geographic references)**:
+  Use `location` for a general location string, or more specific fields such as `city`, `state`, `country`, `neighborhood`.
+  These fields enable locality filters (e.g. "show entities from São Paulo") and geographic aggregation in reports.
 
 ## Entity Type Reference
 
@@ -244,10 +247,22 @@ class OntologyGenerator:
         combined_text = "\n\n---\n\n".join(document_texts)
         original_length = len(combined_text)
 
-        # If text exceeds 50,000 characters, truncate (only affects content sent to LLM, not graph construction)
+        # If text exceeds the limit, use distributed sampling (beginning + middle + end)
+        # rather than a plain head-truncation so the LLM sees a representative slice of
+        # the whole document instead of only the opening pages.
         if len(combined_text) > self.MAX_TEXT_LENGTH_FOR_LLM:
-            combined_text = combined_text[:self.MAX_TEXT_LENGTH_FOR_LLM]
-            combined_text += f"\n\n...(original text has {original_length} characters, truncated to first {self.MAX_TEXT_LENGTH_FOR_LLM} characters for ontology analysis)..."
+            segment = self.MAX_TEXT_LENGTH_FOR_LLM // 3
+            head = combined_text[:segment]
+            mid_start = (original_length - segment) // 2
+            middle = combined_text[mid_start: mid_start + segment]
+            tail = combined_text[-segment:]
+            combined_text = (
+                head
+                + f"\n\n...(middle portion of text, original {original_length} characters)...\n\n"
+                + middle
+                + f"\n\n...(end portion of text, original {original_length} characters)...\n\n"
+                + tail
+            )
 
         message = f"""## Simulation Requirements
 
