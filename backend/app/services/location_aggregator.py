@@ -402,7 +402,7 @@ class LocationAggregatorService:
         )
 
         results: List[Dict[str, Any]] = []
-        for c_name, c_data in stats["hierarchy"].items():
+        for _, c_data in stats["hierarchy"].items():
             for s_name, s_data in c_data["states"].items():
                 for city_name, city_data in s_data["cities"].items():
                     for nbhd_name, nbhd_data in city_data["neighborhoods"].items():
