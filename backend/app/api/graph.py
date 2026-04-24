@@ -694,6 +694,9 @@ def get_location_stats(graph_id: str):
     except Exception as e:
         logger.error(f"Failed to get location stats for graph {graph_id}: {str(e)}")
         return jsonify({"success": False, "error": "Failed to retrieve location statistics"}), 500
+
+
+@graph_bp.route('/<graph_id>/location-entities', methods=['GET'])
 def get_entities_by_location(graph_id: str):
     """
     Return a flat list of entities matching the requested location.
@@ -757,7 +760,10 @@ def get_entities_by_location(graph_id: str):
         })
 
     except ValueError as e:
-        return jsonify({"success": False, "error": str(e)}), 400
+        # ValueError is raised by the service for invalid filter combinations.
+        # Return a safe, fixed message rather than forwarding the internal exception string.
+        logger.warning(f"Invalid location filter for graph {graph_id}: {str(e)}")
+        return jsonify({"success": False, "error": "Invalid location filter: at least one of country, state, city, or neighborhood must be provided"}), 400
     except Exception as e:
         logger.error(f"Failed to get entities by location for graph {graph_id}: {str(e)}")
         return jsonify({"success": False, "error": "Failed to retrieve entities by location"}), 500
