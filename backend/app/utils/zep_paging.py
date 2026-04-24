@@ -34,7 +34,7 @@ from .logger import get_logger
 
 logger = get_logger('mirofish.zep_paging')
 
-_DEFAULT_PAGE_SIZE = 100
+_DEFAULT_PAGE_SIZE = 200
 _MAX_NODES = 2000
 _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_RETRY_DELAY = 2.0  # seconds, doubles each retry

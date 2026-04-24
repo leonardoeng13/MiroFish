@@ -305,27 +305,30 @@ class SimulationManager:
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3
-    ) -> SimulationState:
+        parallel_profile_count: int = 3,
+        location_filter: Optional[Dict[str, str]] = None
+    ) -> 'SimulationState':
         """
         Prepare simulation environment (fully automated)
         
         Steps:
         1. Read and filter entities from the Zep graph
-        2. Generate OASIS Agent Profiles for each entity (optional LLM enrichment, supports parallel)
-        3. Use LLM to intelligently generate simulation configuration parameters (time, activity, posting frequency, etc.)
-        4. Save configuration and profile files
-        5. Copy preset scripts to the simulation directory
+        2. (Optionally) apply a geographic location filter to the entity list
+        3. Generate OASIS Agent Profiles for each entity (optional LLM enrichment, supports parallel)
+        4. Use LLM to intelligently generate simulation configuration parameters
+        5. Save configuration and profile files
         
         Args:
             simulation_id: Simulation ID
-            simulation_requirement: Simulation requirement description (used for LLM config generation)
-            document_text: Raw document content (used for LLM background understanding)
+            simulation_requirement: Simulation requirement description
+            document_text: Raw document content
             defined_entity_types: Predefined entity types (optional)
             use_llm_for_profiles: Whether to use LLM to generate detailed personas
             progress_callback: Progress callback function (stage, progress, message)
             parallel_profile_count: Number of profiles to generate in parallel, default 3
-            
+            location_filter: Optional dict with keys ``country``, ``state``, ``city``,
+                ``neighborhood`` to restrict the simulation to agents from a specific region.
+                
         Returns:
             SimulationState
         """
@@ -370,9 +373,49 @@ class SimulationManager:
                 state.error = "No matching entities found, please verify the graph is built correctly"
                 self._save_simulation_state(state)
                 return state
-            
+
+            # ========== Stage 1b: Apply location filter (optional) ==========
+            candidate_entities = filtered.entities
+            if location_filter and any(location_filter.values()):
+                lf_country = (location_filter.get('country') or '').strip().lower()
+                lf_state = (location_filter.get('state') or '').strip().lower()
+                lf_city = (location_filter.get('city') or '').strip().lower()
+                lf_neighborhood = (location_filter.get('neighborhood') or '').strip().lower()
+
+                def _matches_location(entity) -> bool:
+                    attrs = entity.attributes or {}
+                    # Collect candidate location strings from attributes
+                    country_val = str(attrs.get('country') or attrs.get('pais') or '').lower()
+                    state_val = str(attrs.get('state') or attrs.get('estado') or '').lower()
+                    city_val = str(attrs.get('city') or attrs.get('cidade') or attrs.get('location') or '').lower()
+                    nbhd_val = str(attrs.get('neighborhood') or attrs.get('bairro') or '').lower()
+
+                    if lf_country and lf_country not in country_val:
+                        return False
+                    if lf_state and lf_state not in state_val:
+                        return False
+                    if lf_city and lf_city not in city_val:
+                        return False
+                    if lf_neighborhood and lf_neighborhood not in nbhd_val:
+                        return False
+                    return True
+
+                candidate_entities = [e for e in filtered.entities if _matches_location(e)]
+                logger.info(
+                    f"Location filter applied: {len(filtered.entities)} → "
+                    f"{len(candidate_entities)} entities (filter={location_filter})"
+                )
+                if not candidate_entities:
+                    state.status = SimulationStatus.FAILED
+                    state.error = (
+                        f"No entities found for location filter {location_filter}. "
+                        "Try relaxing the filter or check location attributes in the graph."
+                    )
+                    self._save_simulation_state(state)
+                    return state
+
             # ========== Stage 2: Generate Agent Profiles ==========
-            total_entities = len(filtered.entities)
+            total_entities = len(candidate_entities)
             
             if progress_callback:
                 progress_callback(
@@ -407,7 +450,7 @@ class SimulationManager:
                 realtime_platform = "twitter"
             
             profiles = generator.generate_profiles_from_entities(
-                entities=filtered.entities,
+                entities=candidate_entities,
                 use_llm=use_llm_for_profiles,
                 progress_callback=profile_progress,
                 graph_id=state.graph_id,  # Pass graph_id for Zep retrieval
