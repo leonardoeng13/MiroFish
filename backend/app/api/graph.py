@@ -692,10 +692,8 @@ def get_location_stats(graph_id: str):
         return jsonify({"success": True, "data": stats})
 
     except Exception as e:
-        return jsonify(error_response(str(e), 500, e)), 500
-
-
-@graph_bp.route('/<graph_id>/location-entities', methods=['GET'])
+        logger.error(f"Failed to get location stats for graph {graph_id}: {str(e)}")
+        return jsonify({"success": False, "error": "Failed to retrieve location statistics"}), 500
 def get_entities_by_location(graph_id: str):
     """
     Return a flat list of entities matching the requested location.
@@ -761,4 +759,5 @@ def get_entities_by_location(graph_id: str):
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
-        return jsonify(error_response(str(e), 500, e)), 500
+        logger.error(f"Failed to get entities by location for graph {graph_id}: {str(e)}")
+        return jsonify({"success": False, "error": "Failed to retrieve entities by location"}), 500

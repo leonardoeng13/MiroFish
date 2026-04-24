@@ -382,21 +382,23 @@ class SimulationManager:
                 lf_city = (location_filter.get('city') or '').strip().lower()
                 lf_neighborhood = (location_filter.get('neighborhood') or '').strip().lower()
 
+                def _get_loc_attr(attrs: dict, *keys: str) -> str:
+                    """Return the first non-empty string value found under any of the given keys."""
+                    for k in keys:
+                        val = str(attrs.get(k) or '').lower()
+                        if val:
+                            return val
+                    return ''
+
                 def _matches_location(entity) -> bool:
                     attrs = entity.attributes or {}
-                    # Collect candidate location strings from attributes
-                    country_val = str(attrs.get('country') or attrs.get('pais') or '').lower()
-                    state_val = str(attrs.get('state') or attrs.get('estado') or '').lower()
-                    city_val = str(attrs.get('city') or attrs.get('cidade') or attrs.get('location') or '').lower()
-                    nbhd_val = str(attrs.get('neighborhood') or attrs.get('bairro') or '').lower()
-
-                    if lf_country and lf_country not in country_val:
+                    if lf_country and lf_country not in _get_loc_attr(attrs, 'country', 'pais', 'país'):
                         return False
-                    if lf_state and lf_state not in state_val:
+                    if lf_state and lf_state not in _get_loc_attr(attrs, 'state', 'estado', 'provincia', 'província'):
                         return False
-                    if lf_city and lf_city not in city_val:
+                    if lf_city and lf_city not in _get_loc_attr(attrs, 'city', 'cidade', 'location', 'municipio', 'município'):
                         return False
-                    if lf_neighborhood and lf_neighborhood not in nbhd_val:
+                    if lf_neighborhood and lf_neighborhood not in _get_loc_attr(attrs, 'neighborhood', 'bairro', 'neighbourhood', 'district', 'distrito'):
                         return False
                     return True
 

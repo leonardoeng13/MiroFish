@@ -78,6 +78,11 @@ _ATTR_KEY_NORMALISE = {
 _UNKNOWN = "Unknown"
 
 
+def _get_node_uuid(node: Any) -> str:
+    """Return the UUID string for a Zep node regardless of attribute name variant."""
+    return getattr(node, 'uuid_', None) or getattr(node, 'uuid', '') or ''
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -235,7 +240,7 @@ class LocationAggregatorService:
 
         for node in nodes:
             labels: List[str] = getattr(node, 'labels', []) or []
-            node_uuid: str = getattr(node, 'uuid_', None) or getattr(node, 'uuid', '') or ''
+            node_uuid: str = _get_node_uuid(node)
             node_name: str = (node.name or '').strip()
 
             # Entity-type filter

@@ -39,6 +39,10 @@ from ..models.task import TaskManager, TaskStatus
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 from .text_processor import TextProcessor
 
+# Delay (in seconds) inserted between consecutive full-sized batches to avoid
+# overwhelming the Zep API.  Skipped automatically for smaller final batches.
+_BATCH_DELAY_SECONDS = 0.5
+
 
 @dataclass
 class GraphInfo:
@@ -355,7 +359,7 @@ class GraphBuilderService:
                 # Small delay between batches only when the batch was full-sized,
                 # to avoid hammering the API under light loads.
                 if len(batch_chunks) >= batch_size:
-                    time.sleep(0.5)
+                    time.sleep(_BATCH_DELAY_SECONDS)
                 
             except Exception as e:
                 if progress_callback:
